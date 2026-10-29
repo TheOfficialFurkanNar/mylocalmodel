@@ -1,17 +1,7 @@
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer, StoppingCriteria, StoppingCriteriaList
+from transformers import AutoModelForCausalLM, AutoTokenizer
 from config import ChatConfig
 from calibration import SimpleTemperatureScaler
-
-
-class CustomStopCriteria(StoppingCriteria):
-    def __init__(self, stop_ids):
-        super().__init__()
-        self.stop_ids = stop_ids
-
-    def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor, **kwargs) -> bool:
-        last_id = input_ids[0][-1].item()
-        return last_id in self.stop_ids
 
 
 class CLIChat:
@@ -35,14 +25,6 @@ class CLIChat:
         # Set pad token if not present
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
-
-        # Compute stop token IDs if any stop sequence can be mapped to single tokens
-        stop_ids = [self.tokenizer.eos_token_id]
-        for seq in self.config.stop_sequences:
-            encoded = self.tokenizer.encode(seq, add_special_tokens=False)
-            if len(encoded) == 1:
-                stop_ids.append(encoded[0])
-        self.stopping_criteria = StoppingCriteriaList([CustomStopCriteria(stop_ids)])
 
         print("Model loaded successfully!\n")
 
@@ -116,7 +98,6 @@ class CLIChat:
                 no_repeat_ngram_size=3,
                 pad_token_id=self.tokenizer.pad_token_id,
                 eos_token_id=self.tokenizer.eos_token_id,
-                stopping_criteria=self.stopping_criteria,
                 return_dict_in_generate=True,
                 output_scores=True
             )

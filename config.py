@@ -8,9 +8,14 @@ class ChatConfig:
 
     model_name: str = "Qwen/Qwen2.5-1.5B-Instruct"
     local_model_path: str = r""  # If set, uses local model path instead of downloading from HF
-    system_prompt: str = "You are a helpful and friendly AI assistant. Provide clear, accurate, and thoughtful responses to user questions and requests."
-    max_length: int = 2048
-    max_new_tokens: int = 512
+    system_prompt: str = (
+        "You are a helpful, careful assistant. Show your reasoning steps before giving "
+        "your final answer. Be clear and accurate. If you are unsure or lack information, "
+        "say so plainly rather than guessing. When writing mathematics, use inline LaTeX "
+        "with $...$ or display LaTeX with $$...$$ for equations."
+    )
+    max_length: int = 4096
+    max_new_tokens: int = 1024
     temperature: float = 0.7  # Generation temperature for sampling
     calibration_temperature: float = 0.8  # Temperature for confidence calibration
     num_return_sequences: int = 1
