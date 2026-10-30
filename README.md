@@ -10,6 +10,7 @@ A small CUDA-based command-line chat application for Qwen instruct models. Each 
 - Optionally prints scores for all candidates and marks the selected response.
 - Can load a model from Hugging Face or from a local model directory.
 - Drops the oldest conversation turns when the prompt exceeds the configured context budget.
+- Includes a restricted calculator tool for arithmetic, numeric functions, and selected symbolic-calculus operations.
 
 ## Examples
 
@@ -60,6 +61,7 @@ Python dependencies are listed in `requirements.txt`:
 - `transformers`
 - `sentencepiece`
 - `tiktoken`
+- `sympy` (symbolic calculator operations)
 
 Install a PyTorch build compatible with your CUDA setup by following the [official PyTorch installation selector](https://pytorch.org/get-started/locally/), then install the remaining project dependencies.
 
@@ -108,13 +110,34 @@ Edit the defaults in `config.py` (`ChatConfig`) before launching. Common setting
 | `show_candidate_scores` | `True` | Whether to print candidate scores and token counts |
 | `system_prompt` | reasoning-steps prompt | Asks the model to show its reasoning steps before the final answer and state uncertainty rather than guess |
 
-Lower `best_of_n` or `max_new_tokens` to reduce GPU memory use and generation time. Increasing `best_of_n` samples more candidates, but does not guarantee a better answer; selection relies on the model's own token likelihoods. The system prompt asks the model to show reasoning steps before answering and format mathematical expressions with inline `$...$` or display `$$...$$` LaTeX.
+Lower `best_of_n` or `max_new_tokens` to reduce GPU memory use and generation time. Increasing `best_of_n` samples more candidates, but does not guarantee a better answer; selection relies on the model's own token likelihoods. The system prompt asks the model to show reasoning steps before answering, use the calculator for computations, and format mathematical expressions with inline `$...$` or display `$$...$$` LaTeX.
+
+## Calculator tool
+
+When a selected candidate requests a calculation using `<calculator>expression</calculator>`, the application evaluates the expression and sends the result back to the model before it writes its answer. The tool tag must contain one math expression only; assignments and `print` calls are rejected. If evaluation fails or reaches the two-second timeout, the model receives the error and is asked to retry with a valid expression. After repeated failure, the app returns an explicit calculation failure instead of presenting an unverified numeric answer. Tool requests are limited to two rounds per response.
+
+Each calculator call is also appended to `calculator_calls.jsonl` in the project directory. Records include the UTC timestamp, original question, expression, success or failure, result or error, and elapsed time. This local audit log is not inserted into the model prompt or conversation history and is ignored by Git.
+
+The calculator parses a restricted Python-like math syntax; it does not call Python `eval`. It supports `+`, `-`, `*`, `/`, `//`, `%`, parentheses, `^` as exponentiation, and the constants `pi`, `e`, and `tau`. Trigonometric functions use radians. Numeric functions include `sqrt`, `log`, `pow`, `max`, `min`, `abs`, `sin`, `cos`, `tan`, `exp`, `ceil`, `floor`, and `round`; aggregate functions include `sum`, `prod`, and `mean`.
+
+Selected SymPy operations are also available:
+
+| Operation | Example |
+| --- | --- |
+| Derivative | `diff(x^3, x)` |
+| Indefinite integral | `integrate(sin(x), x)` |
+| Definite integral | `integrate(x^2, x, 0, 1)` |
+| Limit | `limit(sin(x)/x, x, 0)` |
+| Numeric approximation | `approx(sqrt(2), 30)` |
+
+Inputs are restricted by expression length, syntax depth, exponent size, and result size. Symbolic evaluation runs in a separate process that is terminated when the time limit expires. These safeguards reduce risk but do not make every symbolic problem easy or guarantee that a returned mathematical result is correct; review important results.
 
 ## Project files
 
 - `run.py` — model loading, prompt construction, batched generation, response selection, and interactive CLI.
 - `config.py` — model, generation, scoring, and stop-sequence settings.
 - `calibration.py` — temperature scaling and length-normalized candidate scoring.
+- `tools/calculator.py` — restricted arithmetic and SymPy calculus evaluator used by model tool requests.
 - `requirements.txt` — Python dependencies.
 - `LICENSE` — MIT License.
 
