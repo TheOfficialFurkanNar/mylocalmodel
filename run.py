@@ -1,7 +1,14 @@
+import json
+import re
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from config import ChatConfig
 from calibration import SimpleTemperatureScaler
+from tools.calculator import calculate
 
 
 class CLIChat:
@@ -11,6 +18,7 @@ class CLIChat:
             raise RuntimeError("CUDA is not available. This application requires a CUDA-enabled GPU.")
 
         self.config = config
+        self.calculator_log_path = Path(__file__).resolve().parent / "calculator_calls.jsonl"
         self.device = torch.device("cuda")
         print(f"Using device: {self.device}")
 
@@ -69,6 +77,23 @@ class CLIChat:
             if idx != -1 and idx < earliest_idx:
                 earliest_idx = idx
         return text[:earliest_idx].strip()
+
+    def log_calculator_call(self, question: str, expression: str, result=None, error=None, elapsed_seconds=0.0):
+        """Append a local-only calculator audit record; never add it to model messages."""
+        record = {
+            "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+            "question": question,
+            "expression": expression,
+            "success": error is None,
+            "result": result,
+            "error": error,
+            "elapsed_seconds": round(elapsed_seconds, 6),
+        }
+        try:
+            with self.calculator_log_path.open("a", encoding="utf-8") as log_file:
+                log_file.write(json.dumps(record, ensure_ascii=False) + "\n")
+        except OSError as exc:
+            print(f"Warning: Could not write calculator audit log: {exc}")
 
     def generate_best_of_n_response(self, user_input: str):
         """
@@ -162,6 +187,60 @@ class CLIChat:
                 continue
 
             response_text, info = self.generate_best_of_n_response(user_input)
+
+            # Resolve calculator requests and give the result (or error) back to the model.
+            last_calculator_error = None
+            calculation_succeeded = False
+            for _ in range(2):
+                tool_call = re.search(r"<calculator>(.*?)</calculator>", response_text, re.DOTALL | re.IGNORECASE)
+                if tool_call is None:
+                    break
+
+                expression = tool_call.group(1).strip()
+                calculation_started = time.perf_counter()
+                try:
+                    tool_result = calculate(expression)
+                    feedback = f"Calculator result for {expression}: {tool_result}"
+                    calculation_succeeded = True
+                    last_calculator_error = None
+                    self.log_calculator_call(
+                        user_input, expression, result=tool_result,
+                        elapsed_seconds=time.perf_counter() - calculation_started,
+                    )
+                except Exception as exc:
+                    last_calculator_error = str(exc)
+                    calculation_succeeded = False
+                    feedback = f"Calculator error for {expression}: {exc}"
+                    self.log_calculator_call(
+                        user_input, expression, error=str(exc),
+                        elapsed_seconds=time.perf_counter() - calculation_started,
+                    )
+
+                if calculation_succeeded:
+                    instruction = (
+                        "Use the calculator result as authoritative. Do not recalculate it. "
+                        "Answer the original question directly."
+                    )
+                else:
+                    instruction = (
+                        "Retry once using a single valid math expression inside "
+                        "<calculator>expression</calculator>. Do not use assignments, "
+                        "print calls, or other Python statements. Do not give a numeric "
+                        "answer unless the calculator succeeds."
+                    )
+                follow_up = (
+                    f"{user_input}\n\n{feedback}\n"
+                    f"{instruction}"
+                )
+                response_text, info = self.generate_best_of_n_response(follow_up)
+
+            if last_calculator_error is not None and not calculation_succeeded:
+                response_text = (
+                    "I couldn't verify a numerical answer because the calculator request "
+                    f"failed: {last_calculator_error}"
+                )
+
+            response_text = re.sub(r"<calculator>.*?</calculator>", "[calculator request could not be completed]", response_text, flags=re.DOTALL | re.IGNORECASE)
 
             if self.config.show_candidate_scores:
                 print(f"\n--- Best-of-{self.config.best_of_n} Candidate Scores ---")
