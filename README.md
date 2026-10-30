@@ -11,6 +11,16 @@ A small CUDA-based command-line chat application for Qwen instruct models. Each 
 - Can load a model from Hugging Face or from a local model directory.
 - Drops the oldest conversation turns when the prompt exceeds the configured context budget.
 
+## Examples
+
+### Electrostatics response
+
+**User:** Can the magnitude of the point charge be negative, if not why?
+
+**AI (generated):** “Yes, the magnitude can indeed be negative…” The response also gave contradictory explanations of attraction and repulsion.
+
+**Accuracy note:** This response is incorrect. A magnitude cannot be negative, and the response reverses the usual relationship between charge signs and attraction or repulsion. This example shows that the highest-scoring Best-of-N candidate can still contain misinformation.
+
 ## Requirements
 
 - Python 3.9 or newer.
