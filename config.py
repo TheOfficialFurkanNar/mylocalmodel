@@ -23,7 +23,7 @@ class ChatConfig:
     top_k: int = 40
     top_p: float = 0.9
     repetition_penalty: float = 1.15
-    best_of_n: int = 32  # Number of candidate responses to sample and score per turn
+    best_of_n: int = 4  # Number of candidate responses to sample and score per turn
     show_candidate_scores: bool = True  # Display candidate scores and ranking in CLI output
     stop_sequences: List[str] = field(default_factory=lambda: [
         "\nInstruction:",

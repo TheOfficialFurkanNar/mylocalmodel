@@ -96,6 +96,7 @@ class CLIChat:
                 top_p=self.config.top_p,
                 repetition_penalty=self.config.repetition_penalty,
                 no_repeat_ngram_size=3,
+                use_cache=True,
                 pad_token_id=self.tokenizer.pad_token_id,
                 eos_token_id=self.tokenizer.eos_token_id,
                 return_dict_in_generate=True,

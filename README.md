@@ -15,7 +15,7 @@ A small CUDA-based command-line chat application for Qwen instruct models. Each 
 
 - Python 3.9 or newer.
 - A CUDA-enabled NVIDIA GPU and a PyTorch build with CUDA support. The application exits with an error if CUDA is unavailable.
-- Enough GPU memory for the selected model and the batched candidates. The default Best-of-32 setting can use substantial memory.
+- Enough GPU memory for the selected model and the batched candidates.
 
 Python dependencies are listed in `requirements.txt`:
 
@@ -62,7 +62,7 @@ Edit the defaults in `config.py` (`ChatConfig`) before launching. Common setting
 | --- | --- | --- |
 | `model_name` | `Qwen/Qwen2.5-1.5B-Instruct` | Hugging Face model identifier |
 | `local_model_path` | empty | Local model directory; takes precedence over `model_name` |
-| `best_of_n` | `32` | Number of candidates generated in one batch |
+| `best_of_n` | `4` | Number of candidates generated in one batch |
 | `max_length` | `4096` | Prompt context budget, including generation allowance |
 | `max_new_tokens` | `1024` | Maximum tokens generated per candidate |
 | `temperature` | `0.7` | Sampling temperature used during generation |
