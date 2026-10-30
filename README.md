@@ -11,6 +11,43 @@ A small CUDA-based command-line chat application for Qwen instruct models. Each 
 - Can load a model from Hugging Face or from a local model directory.
 - Drops the oldest conversation turns when the prompt exceeds the configured context budget.
 
+## Examples
+
+### Electrostatics response
+
+The following is the full user and assistant message text from one example session. Candidate score output is omitted.
+
+~~~text
+You: Show me the equations for electrostatic force
+
+AI: Sure! Here’s the equation that defines the electric field \( \mathbf{E} \) at any point due to a point charge:
+
+\[
+\mathbf E = k_e \frac{\mathbf q}{r^2}
+\]
+
+Where:
+- \( \boldsymbol{E}\ ) is the electric-field vector.
+- \( k_e = 8.99 \times 10^9 \, \text{N m}^2/\text{C}^3 \) (the Coulomb constant).
+- \( q \) is the magnitude of the point charge in coulombs.
+- **\( r \)** is the distance from the charge where we're calculating the field.
+
+If you have multiple point charges, you can sum their individual contributions using this formula applied to each one separately.
+
+You: Can the magnitude of the point charge be negative, if not why?
+
+AI: Yes, the magnitude can indeed be negative because it represents the strength of the force between two charges, regardless of whether they attract or repel each other.
+
+The sign of the charge determines whether the interaction will result in attraction (\(+\) signs lead to attractive forces) or repulsion (\(-\) signs). Therefore, even though the absolute value of the magnitude gives us the size of the effect, the actual direction depends entirely on which charge has positive and which has negative signs.
+
+In summary:
+- A positive magnitude indicates an attracting force.
+- A negative magnitude also indicates an attractive force but points away from the source.
+- In both cases, the net effect of having opposite-signed magnitudes results in a repulsive force when added together.
+~~~
+
+**Accuracy note:** The generated answer is incorrect. A magnitude cannot be negative, and the answer gives contradictory and false statements about attraction and repulsion. This example shows that the highest-scoring Best-of-N candidate can still contain misinformation.
+
 ## Requirements
 
 - Python 3.9 or newer.
