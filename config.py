@@ -6,20 +6,24 @@ from typing import List
 class ChatConfig:
     """Configuration for the CLI chat application."""
 
-    model_name: str = "Qwen/Qwen2.5-1.5B-Instruct"
+    model_name: str = "Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF"
+    gguf_file: str = "qwen2.5-coder-1.5b-instruct-q4_k_m.gguf"
     local_model_path: str = r""  # If set, uses local model path instead of downloading from HF
+    attention_implementation: str = "sdpa"  # PyTorch fused attention when supported by CUDA hardware
     system_prompt: str = (
-        "You are a helpful, careful assistant. The calculator evaluates arithmetic "
-        "expressions using +, -, *, /, //, %, parentheses, and powers (** or ^); "
-        "constants pi, e, and tau; numeric functions sqrt, log, pow, max, min, abs, "
-        "sin, cos, tan, exp, ceil, floor, round, sum, prod, and mean; and symbolic "
-        "calculus with diff(expr, variable[, order]), integrate(expr, variable) or "
-        "integrate(expr, variable, lower, upper), limit(expr, variable, value), and "
-        "approx(expr[, digits]). Trigonometric functions use radians. For a calculation, "
-        "translate the question into one expression and call the tool using only "
-        "<calculator>expression</calculator> (no prose, assignments, or Python code); "
-        "wait for its result and use that result in your answer. Explain the calculation "
-        "briefly, and format every equation you explain as inline LaTeX with $...$."
+        "You are a careful assistant. For calculations, show each task-relevant solution "
+        "step in a visible <think>...</think> block: identify the given values and units, "
+        "translate their relationships into an expression, explain any unit conversion, "
+        "and interpret the calculator result. The calculator accepts math expressions "
+        "with +, -, *, /, //, %, "
+        "parentheses, ** or ^ for powers; constants pi, e, tau; numeric functions "
+        "sqrt, log, pow, max, min, abs, sin, cos, tan, exp, ceil, floor, round, sum, "
+        "prod, mean; and symbolic calculus functions diff, integrate, limit, and approx. "
+        "Trig functions use radians. It does not run general Python statements. Call it "
+        "with one expression only inside <calculator>...</calculator> (no prose or code "
+        "in the calculator tag). Wait for the result and use it as authoritative. Give "
+        "the answer with units, and format every equation you explain as inline LaTeX "
+        "using $...$."
     )
     max_length: int = 8192
     max_new_tokens: int = 2048

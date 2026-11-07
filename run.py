@@ -14,22 +14,22 @@ from tools.calculator import calculate
 class CLIChat:
     CALCULATOR_EXAMPLES = [
         (
-            "A jacket costs $80 and has a 25% discount. What is the sale price?",
-            "<calculator>80 * (1 - 25 / 100)</calculator>",
-            "Calculator result for 80 * (1 - 25 / 100): 60",
-            "The discount is $80 * 0.25 = $20, so the sale price is $80 - $20 = **$60**.",
+            "A jacket costs $80, has a 25% discount, and then 8% sales tax is applied to the discounted price. What is the final price?",
+            "<think>1. The original price is $80. 2. A 25% discount leaves 1 - 25/100 = 0.75 of the price. 3. Sales tax is applied after the discount, so increase the discounted price by a factor of 1 + 8/100 = 1.08.</think>\n<calculator>80 * (1 - 25 / 100) * (1 + 8 / 100)</calculator>",
+            "Calculator result for 80 * (1 - 25 / 100) * (1 + 8 / 100): 64.8",
+            "<think>1. The calculator result is 64.8 dollars. 2. The discount is $80 * 25/100 = 20$ dollars, leaving $80 - 20 = 60$ dollars. 3. Tax on $60 is $60 * 8/100 = 4.80$ dollars. 4. Add the tax: $60 + 4.80 = 64.80$ dollars.</think>\nThe final price is **$64.80**.",
         ),
         (
             "There are 5 bags with 12 apples in each bag. Each apple weighs 50 grams. What is the total weight?",
-            "<calculator>5 * 12 * 50</calculator>",
+            "<think>1. There are 5 bags with 12 apples each, so multiply 5 by 12 to get the number of apples. 2. Multiply that count by 50 grams per apple to get total grams. 3. Divide grams by 1000 to convert the result to kilograms.</think>\n<calculator>5 * 12 * 50</calculator>",
             "Calculator result for 5 * 12 * 50: 3000",
-            "There are $5 * 12 = 60$ apples. At 50 grams each, their total mass is **3000 grams (3 kilograms)**.",
+            "<think>1. The calculator gives 3000 grams. 2. There are $5 * 12 = 60$ apples, and $60 * 50 = 3000$ grams. 3. Since 1000 grams equal 1 kilogram, $3000 / 1000 = 3$ kilograms.</think>\nThe total weight is **3000 grams, or 3 kilograms**.",
         ),
         (
             "What is 17% of 240?",
-            "<calculator>240 * 17 / 100</calculator>",
+            "<think>1. '17 percent of 240' means 17/100 multiplied by 240. 2. Evaluate that product to find the requested amount.</think>\n<calculator>240 * 17 / 100</calculator>",
             "Calculator result for 240 * 17 / 100: 40.8",
-            "17 percent of 240 is $240 * 17 / 100 = 40.8$.",
+            "<think>1. The calculator result is 40.8. 2. This is the amount corresponding to 17% of 240.</think>\n17 percent of 240 is $17 / 100 * 240 = 40.8$.",
         ),
     ]
 
@@ -46,8 +46,17 @@ class CLIChat:
         # Use local path if provided, otherwise use model name from HF
         model_path = config.local_model_path if config.local_model_path else config.model_name
         print(f"Loading model from: {model_path}...")
-        self.tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
-        self.model = AutoModelForCausalLM.from_pretrained(model_path, trust_remote_code=True).to(self.device)
+        load_kwargs = {} if config.local_model_path else {"gguf_file": config.gguf_file}
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            model_path, trust_remote_code=True, **load_kwargs
+        )
+        self.model = AutoModelForCausalLM.from_pretrained(
+            model_path,
+            trust_remote_code=True,
+            torch_dtype=torch.float16,
+            attn_implementation=config.attention_implementation,
+            **load_kwargs,
+        ).to(self.device)
         self.scaler = SimpleTemperatureScaler(config)
         self.conversation_history = []
 
@@ -126,7 +135,7 @@ class CLIChat:
         except OSError as exc:
             print(f"Warning: Could not write calculator audit log: {exc}")
 
-    def generate_best_of_n_response(self, user_input: str):
+    def generate_best_of_n_response(self, user_input: str, require_calculator: bool = False):
         """
         Sample N candidate responses in parallel via GPU batching,
         score each candidate using length-normalized log-likelihood,
@@ -194,7 +203,17 @@ class CLIChat:
                 best_score = score_dict['score']
                 best_index = i
 
-        winner = candidates[best_index]
+        if require_calculator:
+            tool_candidates = [
+                candidate for candidate in candidates
+                if re.search(r"<calculator>.*?</calculator>", candidate["text"], re.DOTALL | re.IGNORECASE)
+            ]
+            if tool_candidates:
+                winner = max(tool_candidates, key=lambda candidate: candidate["score"])
+            else:
+                winner = candidates[best_index]
+        else:
+            winner = candidates[best_index]
 
         return winner['text'], {
             'winner': winner,
@@ -218,6 +237,21 @@ class CLIChat:
                 continue
 
             response_text, info = self.generate_best_of_n_response(user_input)
+
+            requires_calculator = self.question_requires_calculation(user_input)
+            if requires_calculator and not re.search(
+                r"<calculator>.*?</calculator>", response_text, re.DOTALL | re.IGNORECASE
+            ):
+                retry_prompt = (
+                    f"{user_input}\n\nYou must use the calculator before answering. "
+                    "Show the task-relevant steps in <think>...</think> to identify "
+                    "the quantities and operations, then output exactly one "
+                    "valid math expression inside <calculator>...</calculator>. Do not "
+                    "give the answer yet."
+                )
+                response_text, info = self.generate_best_of_n_response(
+                    retry_prompt, require_calculator=True
+                )
 
             # Resolve calculator requests and give the result (or error) back to the model.
             last_calculator_error = None
@@ -265,6 +299,13 @@ class CLIChat:
                 )
                 response_text, info = self.generate_best_of_n_response(follow_up)
 
+            if (
+                requires_calculator
+                and not calculation_succeeded
+                and last_calculator_error is None
+            ):
+                last_calculator_error = "the model did not produce a calculator request"
+
             if last_calculator_error is not None and not calculation_succeeded:
                 response_text = (
                     "I couldn't verify a numerical answer because the calculator request "
@@ -285,6 +326,20 @@ class CLIChat:
 
             # Record turn in history as tuple (User, AI) - ONLY winner is saved
             self.conversation_history.append((user_input, response_text))
+
+    @staticmethod
+    def question_requires_calculation(question: str) -> bool:
+        """Detect arithmetic word problems that must be calculator-verified."""
+        has_number = re.search(r"\d", question) is not None
+        calculation_intent = re.search(
+            r"\b(?:calculate|compute|how many|how much|total|sum|average|mean|"
+            r"percent(?:age)?|discount|tax|cost|price|weigh(?:s|ed|ing)?|weight|"
+            r"speed|distance|product|quotient|times|multiplied|divided|squared|"
+            r"square root|plus|minus)\b|[-+*/^=]",
+            question,
+            re.IGNORECASE,
+        ) is not None
+        return has_number and calculation_intent
 
 
 def main():

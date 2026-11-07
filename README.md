@@ -91,7 +91,7 @@ Start the chat:
 python run.py
 ```
 
-The default model is `Qwen/Qwen2.5-1.5B-Instruct`. On the first run, Transformers downloads it from Hugging Face unless `local_model_path` is set in `config.py` to a local model directory. Type `quit` or `exit` to end the session.
+The default model is `Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF`, using its `q4_k_m` file. Transformers downloads the model from Hugging Face on the first run unless `local_model_path` is set in `config.py` to a local Transformers model directory. Type `quit` or `exit` to end the session.
 
 ## Configuration
 
@@ -99,22 +99,24 @@ Edit the defaults in `config.py` (`ChatConfig`) before launching. Common setting
 
 | Setting | Default | Purpose |
 | --- | --- | --- |
-| `model_name` | `Qwen/Qwen2.5-1.5B-Instruct` | Hugging Face model identifier |
-| `local_model_path` | empty | Local model directory; takes precedence over `model_name` |
-| `best_of_n` | `4` | Number of candidates generated in one batch |
-| `max_length` | `4096` | Prompt context budget, including generation allowance |
-| `max_new_tokens` | `1024` | Maximum tokens generated per candidate |
+| `model_name` | `Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF` | Hugging Face model repository |
+| `gguf_file` | `qwen2.5-coder-1.5b-instruct-q4_k_m.gguf` | GGUF quantization file loaded from the repository |
+| `local_model_path` | empty | Local Transformers model directory; takes precedence over the Hub model and GGUF file |
+| `attention_implementation` | `sdpa` | PyTorch scaled dot product attention; uses a fused CUDA attention kernel when supported |
+| `best_of_n` | `8` | Number of candidates generated in one batch |
+| `max_length` | `8192` | Prompt context budget, including generation allowance |
+| `max_new_tokens` | `2048` | Maximum tokens generated per candidate |
 | `temperature` | `0.7` | Sampling temperature used during generation |
 | `calibration_temperature` | `0.8` | Temperature used when scoring candidate token probabilities |
 | `top_k` / `top_p` | `40` / `0.9` | Sampling filters |
 | `show_candidate_scores` | `True` | Whether to print candidate scores and token counts |
-| `system_prompt` | reasoning-steps prompt | Asks the model to show its reasoning steps before the final answer and state uncertainty rather than guess |
+| `system_prompt` | calculator and formatting instructions | Asks for task-relevant math steps in a visible `<think>` block, calculator use, units, and inline LaTeX |
 
-Lower `best_of_n` or `max_new_tokens` to reduce GPU memory use and generation time. Increasing `best_of_n` samples more candidates, but does not guarantee a better answer; selection relies on the model's own token likelihoods. The system prompt asks the model to show reasoning steps before answering, use the calculator for computations, and format mathematical expressions with inline `$...$` or display `$$...$$` LaTeX.
+Lower `best_of_n` or `max_new_tokens` to reduce GPU memory use and generation time. Increasing `best_of_n` samples more candidates, but does not guarantee a better answer; selection relies on the model's own token likelihoods. The `sdpa` attention setting uses PyTorch's scaled dot product attention, which can dispatch to its fused Flash Attention CUDA kernel when the GPU, dtype, and installed PyTorch build support it; otherwise PyTorch selects another supported SDPA kernel. This is distinct from Dao-AILab's standalone FlashAttention-2 package, whose maintainers describe Windows support as experimental. The GGUF weights are loaded through Transformers and dequantized into a float16 PyTorch model for this application's CUDA generation and scoring path; this is not llama.cpp inference and does not preserve the GGUF file's packed low-memory representation.
 
 ## Calculator tool
 
-When a selected candidate requests a calculation using `<calculator>expression</calculator>`, the application evaluates the expression and sends the result back to the model before it writes its answer. The tool tag must contain one math expression only; assignments and `print` calls are rejected. If evaluation fails or reaches the two-second timeout, the model receives the error and is asked to retry with a valid expression. After repeated failure, the app returns an explicit calculation failure instead of presenting an unverified numeric answer. Tool requests are limited to two rounds per response.
+For arithmetic word problems, the application checks that the selected response calls the calculator using `<calculator>expression</calculator>`. If it does not, the model gets one tool-only retry; among retry candidates, the app prefers one that includes a calculator call. The calculator evaluates the expression and returns the result to the model before it writes its answer. The tool tag must contain one math expression only; assignments and `print` calls are rejected. If evaluation fails, the model is asked to retry with a valid expression. If no calculator call is produced or calculation attempts fail, the app returns an explicit failure instead of an unverified numeric answer. Calculator requests are limited to two rounds per response.
 
 Each calculator call is also appended to `calculator_calls.jsonl` in the project directory. Records include the UTC timestamp, original question, expression, success or failure, result or error, and elapsed time. This local audit log is not inserted into the model prompt or conversation history and is ignored by Git.
 

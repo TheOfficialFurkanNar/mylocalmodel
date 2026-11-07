@@ -1,5 +1,6 @@
-transformers>=4.30.0
+transformers>=4.48.0
 torch>=2.0.0
 sentencepiece
 tiktoken
 sympy
+gguf>=0.10.0
