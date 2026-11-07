@@ -12,6 +12,27 @@ from tools.calculator import calculate
 
 
 class CLIChat:
+    CALCULATOR_EXAMPLES = [
+        (
+            "A jacket costs $80 and has a 25% discount. What is the sale price?",
+            "<calculator>80 * (1 - 25 / 100)</calculator>",
+            "Calculator result for 80 * (1 - 25 / 100): 60",
+            "The discount is $80 * 0.25 = $20, so the sale price is $80 - $20 = **$60**.",
+        ),
+        (
+            "There are 5 bags with 12 apples in each bag. Each apple weighs 50 grams. What is the total weight?",
+            "<calculator>5 * 12 * 50</calculator>",
+            "Calculator result for 5 * 12 * 50: 3000",
+            "There are $5 * 12 = 60$ apples. At 50 grams each, their total mass is **3000 grams (3 kilograms)**.",
+        ),
+        (
+            "What is 17% of 240?",
+            "<calculator>240 * 17 / 100</calculator>",
+            "Calculator result for 240 * 17 / 100: 40.8",
+            "17 percent of 240 is $240 * 17 / 100 = 40.8$.",
+        ),
+    ]
+
     def __init__(self, config: ChatConfig):
         # Check for CUDA availability
         if not torch.cuda.is_available():
@@ -43,6 +64,16 @@ class CLIChat:
         # Add system prompt if configured
         if self.config.system_prompt:
             messages.append({"role": "system", "content": self.config.system_prompt})
+
+        # Show small-model examples of translating word problems into one
+        # calculator expression, then grounding the answer in the tool result.
+        for question, tool_call, tool_result, answer in self.CALCULATOR_EXAMPLES:
+            messages.extend([
+                {"role": "user", "content": question},
+                {"role": "assistant", "content": tool_call},
+                {"role": "user", "content": f"{tool_result}\nAnswer the question using this result."},
+                {"role": "assistant", "content": answer},
+            ])
         
         # Append historical turns
         for user_msg, ai_msg in self.conversation_history:
