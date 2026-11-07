@@ -181,16 +181,16 @@ Inputs are restricted by expression length, syntax depth, exponent size, and res
 
 ## How candidate selection works
 
-For each sampled candidate, let the prompt be \(x\), and let its generated token sequence be \(y_1, \ldots, y_L\). At generation step \(t\), the model produces a vocabulary-sized score vector \(z_t \in \mathbb{R}^{|V|}\). In this implementation, \(z_t\) is the score vector returned by Transformers during generation, after generation-time processing such as sampling temperature, top-k/top-p filtering, and repetition penalty. The candidate scorer applies a second temperature scaling, using the configured calibration temperature \(T_{\mathrm{calib}} > 0\):
+For each sampled candidate, let the prompt be $x$, and let its generated token sequence be $y_1, \ldots, y_L$. At generation step $t$, the model produces a vocabulary-sized score vector $z_t \in \mathbb{R}^{|V|}$. In this implementation, $z_t$ is the score vector returned by Transformers during generation, after generation-time processing such as sampling temperature, top-k/top-p filtering, and repetition penalty. The candidate scorer applies a second temperature scaling, using the configured calibration temperature $T_{\mathrm{calib}} > 0$:
 
 $$
-p_t^{(T)}(v) = \operatorname{softmax}\!\left(\frac{z_t}{T_{\mathrm{calib}}}\right)_v
+p_t^{(T)}(v) = \mathrm{softmax}\!\left(\frac{z_t}{T_{\mathrm{calib}}}\right)_v
 = \frac{\exp(z_{t,v}/T_{\mathrm{calib}})}
        {\sum_{u \in V}\exp(z_{t,u}/T_{\mathrm{calib}})},
 \qquad v \in V.
 $$
 
-Here, \(p_t^{(T)}(y_t)\) is the probability assigned at step \(t\) to the token that the candidate actually generated. The code sums the log of those probabilities and divides by the number of unmasked generated tokens. If \(M\) is the set of generated positions whose token ID is not the tokenizer's pad token ID, the implemented score is:
+Here, $p_t^{(T)}(y_t)$ is the probability assigned at step $t$ to the token that the candidate actually generated. The code sums the log of those probabilities and divides by the number of unmasked generated tokens. If $M$ is the set of generated positions whose token ID is not the tokenizer's pad token ID, the implemented score is:
 
 $$
 S(x,y) = \frac{1}{|M|}\sum_{t \in M}\log p_t^{(T)}(y_t)
@@ -201,20 +201,20 @@ S(x,y) = \frac{1}{|M|}\sum_{t \in M}\log p_t^{(T)}(y_t)
          \right).
 $$
 
-Among the \(N\) candidates, the selected response is:
+Among the $N$ candidates, the selected response is:
 
 $$
-y^* = \underset{y^{(i)},\; i=1,\ldots,N}{\operatorname{arg\,max}}\; S(x,y^{(i)}).
+y^* = \arg\max_{i=1,\ldots,N} S(x,y^{(i)}).
 $$
 
-The division by \(|M|\) makes this a mean log-probability per scored token rather than a total log-probability, reducing the automatic preference for shorter sequences that a sum would create. Exponentiating the mean gives the geometric mean of the selected-token probabilities:
+The division by $|M|$ makes this a mean log-probability per scored token rather than a total log-probability, reducing the automatic preference for shorter sequences that a sum would create. Exponentiating the mean gives the geometric mean of the selected-token probabilities:
 
 $$
 G(x,y) = \exp(S(x,y))
         = \left(\prod_{t \in M}p_t^{(T)}(y_t)\right)^{1/|M|}.
 $$
 
-This value is what the CLI displays as `geom_mean_prob` (as a percentage). Higher \(T_{\mathrm{calib}}\) softens the distribution and lower values make it peakier; it changes the scores and can change the ranking. Because \(z_t\) already reflects generation-time processing, this score is specifically the likelihood under the processed generation scores after calibration scaling, not an independent evaluation using the model's unmodified logits. It is a model-based ranking signal, not a calibrated measure of factual correctness or answer quality. If the tokenizer has no distinct pad token, the code sets its pad token to EOS; in that case EOS positions are also excluded by the pad-ID mask.
+This value is what the CLI displays as `geom_mean_prob` (as a percentage). Higher $T_{\mathrm{calib}}$ softens the distribution and lower values make it peakier; it changes the scores and can change the ranking. Because $z_t$ already reflects generation-time processing, this score is specifically the likelihood under the processed generation scores after calibration scaling, not an independent evaluation using the model's unmodified logits. It is a model-based ranking signal, not a calibrated measure of factual correctness or answer quality. The score mask excludes every generated token whose ID equals `pad_token_id`. If a tokenizer uses the same ID for padding and EOS, the EOS token is therefore excluded as well. In the configured Qwen2.5-Coder-1.5B-Instruct tokenizer, padding is `<|endoftext|>` and the tokenizer's EOS is `<|im_end|>`, so the normal EOS token is distinct and remains part of the score; `<|endoftext|>` tokens are masked.
 
 ## Notes
 
