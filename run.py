@@ -12,6 +12,27 @@ from tools.calculator import calculate
 
 
 class CLIChat:
+    CALCULATOR_EXAMPLES = [
+        (
+            "A jacket costs $80, has a 25% discount, and then 8% sales tax is applied to the discounted price. What is the final price?",
+            "<calculator>80 * (1 - 25 / 100) * (1 + 8 / 100)</calculator>",
+            "Calculator result for 80 * (1 - 25 / 100) * (1 + 8 / 100): 64.8",
+            "The 25% discount gives $80 * (1 - 25/100) = $60$. Tax then adds $60 * 8/100 = $4.80$, so the final price is **$64.80**.",
+        ),
+        (
+            "There are 5 bags with 12 apples in each bag. Each apple weighs 50 grams. What is the total weight?",
+            "<calculator>5 * 12 * 50</calculator>",
+            "Calculator result for 5 * 12 * 50: 3000",
+            "There are $5 * 12 = 60$ apples. At 50 grams each, their total weight is $3000$ grams, or **3 kilograms**.",
+        ),
+        (
+            "What is 17% of 240?",
+            "<calculator>240 * 17 / 100</calculator>",
+            "Calculator result for 240 * 17 / 100: 40.8",
+            "17 percent of 240 is $240 * 17/100 = 40.8$.",
+        ),
+    ]
+
     def __init__(self, config: ChatConfig):
         # Check for CUDA availability
         if not torch.cuda.is_available():
@@ -25,8 +46,17 @@ class CLIChat:
         # Use local path if provided, otherwise use model name from HF
         model_path = config.local_model_path if config.local_model_path else config.model_name
         print(f"Loading model from: {model_path}...")
-        self.tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
-        self.model = AutoModelForCausalLM.from_pretrained(model_path, trust_remote_code=True).to(self.device)
+        load_kwargs = {} if config.local_model_path else {"gguf_file": config.gguf_file}
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            model_path, trust_remote_code=True, **load_kwargs
+        )
+        self.model = AutoModelForCausalLM.from_pretrained(
+            model_path,
+            trust_remote_code=True,
+            torch_dtype=torch.float16,
+            attn_implementation=config.attention_implementation,
+            **load_kwargs,
+        ).to(self.device)
         self.scaler = SimpleTemperatureScaler(config)
         self.conversation_history = []
 
@@ -39,10 +69,25 @@ class CLIChat:
     def build_prompt(self, user_input: str) -> str:
         """Construct multi-turn instruction prompt using Qwen chat template."""
         messages = []
+        include_calculator = self.question_requires_calculation(user_input)
         
         # Add system prompt if configured
         if self.config.system_prompt:
-            messages.append({"role": "system", "content": self.config.system_prompt})
+            system_content = self.config.system_prompt
+            if include_calculator:
+                system_content += " " + self.config.calculator_prompt
+            messages.append({"role": "system", "content": system_content})
+
+        # Show small-model examples of translating word problems into one
+        # calculator expression, then grounding the answer in the tool result.
+        if include_calculator:
+            for question, tool_call, tool_result, answer in self.CALCULATOR_EXAMPLES:
+                messages.extend([
+                    {"role": "user", "content": question},
+                    {"role": "assistant", "content": tool_call},
+                    {"role": "user", "content": f"{tool_result}\nAnswer the question using this result."},
+                    {"role": "assistant", "content": answer},
+                ])
         
         # Append historical turns
         for user_msg, ai_msg in self.conversation_history:
@@ -95,7 +140,7 @@ class CLIChat:
         except OSError as exc:
             print(f"Warning: Could not write calculator audit log: {exc}")
 
-    def generate_best_of_n_response(self, user_input: str):
+    def generate_best_of_n_response(self, user_input: str, require_calculator: bool = False):
         """
         Sample N candidate responses in parallel via GPU batching,
         score each candidate using length-normalized log-likelihood,
@@ -163,7 +208,17 @@ class CLIChat:
                 best_score = score_dict['score']
                 best_index = i
 
-        winner = candidates[best_index]
+        if require_calculator:
+            tool_candidates = [
+                candidate for candidate in candidates
+                if re.search(r"<calculator>.*?</calculator>", candidate["text"], re.DOTALL | re.IGNORECASE)
+            ]
+            if tool_candidates:
+                winner = max(tool_candidates, key=lambda candidate: candidate["score"])
+            else:
+                winner = candidates[best_index]
+        else:
+            winner = candidates[best_index]
 
         return winner['text'], {
             'winner': winner,
@@ -188,10 +243,24 @@ class CLIChat:
 
             response_text, info = self.generate_best_of_n_response(user_input)
 
+            requires_calculator = self.question_requires_calculation(user_input)
+            if requires_calculator and not re.search(
+                r"<calculator>.*?</calculator>", response_text, re.DOTALL | re.IGNORECASE
+            ):
+                retry_prompt = (
+                    f"{user_input}\n\nYou must use the calculator before answering. "
+                    "Identify the quantities and operations, then output exactly one "
+                    "valid math expression inside <calculator>...</calculator>. Do not "
+                    "give the answer yet."
+                )
+                response_text, info = self.generate_best_of_n_response(
+                    retry_prompt, require_calculator=True
+                )
+
             # Resolve calculator requests and give the result (or error) back to the model.
             last_calculator_error = None
             calculation_succeeded = False
-            for _ in range(2):
+            for _ in range(2 if requires_calculator else 0):
                 tool_call = re.search(r"<calculator>(.*?)</calculator>", response_text, re.DOTALL | re.IGNORECASE)
                 if tool_call is None:
                     break
@@ -234,6 +303,13 @@ class CLIChat:
                 )
                 response_text, info = self.generate_best_of_n_response(follow_up)
 
+            if (
+                requires_calculator
+                and not calculation_succeeded
+                and last_calculator_error is None
+            ):
+                last_calculator_error = "the model did not produce a calculator request"
+
             if last_calculator_error is not None and not calculation_succeeded:
                 response_text = (
                     "I couldn't verify a numerical answer because the calculator request "
@@ -241,6 +317,9 @@ class CLIChat:
                 )
 
             response_text = re.sub(r"<calculator>.*?</calculator>", "[calculator request could not be completed]", response_text, flags=re.DOTALL | re.IGNORECASE)
+            response_text = re.sub(r"<think\b[^>]*>.*?</think\s*>", "", response_text, flags=re.DOTALL | re.IGNORECASE)
+            response_text = re.sub(r"<think\b[^>]*>.*$", "", response_text, flags=re.DOTALL | re.IGNORECASE)
+            response_text = re.sub(r"</?think\s*>", "", response_text, flags=re.IGNORECASE).strip()
 
             if self.config.show_candidate_scores:
                 print(f"\n--- Best-of-{self.config.best_of_n} Candidate Scores ---")
@@ -254,6 +333,20 @@ class CLIChat:
 
             # Record turn in history as tuple (User, AI) - ONLY winner is saved
             self.conversation_history.append((user_input, response_text))
+
+    @staticmethod
+    def question_requires_calculation(question: str) -> bool:
+        """Detect arithmetic word problems that must be calculator-verified."""
+        has_number = re.search(r"\d", question) is not None
+        calculation_intent = re.search(
+            r"\b(?:calculate|compute|how many|how much|total|sum|average|mean|"
+            r"percent(?:age)?|discount|tax|cost|price|weigh(?:s|ed|ing)?|weight|"
+            r"speed|distance|product|quotient|times|multiplied|divided|squared|"
+            r"square root|plus|minus)\b|[-+*/^=]",
+            question,
+            re.IGNORECASE,
+        ) is not None
+        return has_number and calculation_intent
 
 
 def main():

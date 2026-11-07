@@ -6,22 +6,31 @@ from typing import List
 class ChatConfig:
     """Configuration for the CLI chat application."""
 
-    model_name: str = "Qwen/Qwen2.5-1.5B-Instruct"
+    model_name: str = "Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF"
+    gguf_file: str = "qwen2.5-coder-1.5b-instruct-q4_k_m.gguf"
     local_model_path: str = r""  # If set, uses local model path instead of downloading from HF
+    attention_implementation: str = "sdpa"  # PyTorch fused attention when supported by CUDA hardware
     system_prompt: str = (
-        "You are a helpful, careful assistant. Show your reasoning steps before giving "
-        "your final answer. Be clear and accurate. If you are unsure or lack information, "
-        "say so plainly rather than guessing. When writing mathematics, use inline LaTeX "
-        "with $...$ or display LaTeX with $$...$$ for equations. For calculations, use "
-        "the calculator by writing exactly one math expression inside "
-        "<calculator>expression</calculator>. Do not put assignments, print calls, "
-        "Python statements, or explanations inside the calculator tags. Wait for the "
-        "calculator result before giving a numerical answer."
+        "You are a careful assistant. Answer the user's actual request directly and stay "
+        "on topic. Do not introduce unrelated calculations. Use inline LaTeX for any "
+        "equations you include. When you provide code, format it as a fenced Markdown "
+        "code block and include a language label when appropriate."
     )
-    max_length: int = 4096
-    max_new_tokens: int = 1024
+    calculator_prompt: str = (
+        "For math questions that require calculation, identify the relevant values and "
+        "units, then use the calculator before answering. It accepts math expressions "
+        "using +, -, *, /, //, %, parentheses, and powers with ** or ^; constants pi, "
+        "e, tau; numeric functions sqrt, log, pow, max, min, abs, sin, cos, tan, exp, "
+        "ceil, floor, round, sum, prod, mean; and calculus functions diff, integrate, "
+        "limit, approx. Trigonometric functions use radians. It does not execute general "
+        "Python code. Put exactly one expression, with no prose or assignments, inside "
+        "<calculator>...</calculator>. Wait for the result and use it as authoritative; "
+        "answer concisely with units."
+    )
+    max_length: int = 8192
+    max_new_tokens: int = 2048
     temperature: float = 0.7  # Generation temperature for sampling
-    calibration_temperature: float = 0.8  # Temperature for confidence calibration
+    calibration_temperature: float = 1.143  # Temperature for confidence calibration (T_gen * T_calib = 0.8)
     num_return_sequences: int = 1
     do_sample: bool = True
     top_k: int = 40
