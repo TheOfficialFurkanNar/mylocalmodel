@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Local Qwen Chat</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <header>
+        <div class="header-content">
+            <div class="logo">
+                <span class="brain-icon">🧮</span>
+                <h1>Local Qwen Chat</h1>
+            </div>
+        </div>
+    </header>
+
+    <div class="app-layout">
+        <aside class="history-sidebar" aria-label="Conversation history">
+            <button type="button" id="newConversationButton" class="new-chat-button">＋ New chat</button>
+            <h2>Recent conversations</h2>
+            <nav id="conversationList" class="conversation-list"></nav>
+        </aside>
+
+        <main id="chatPanel">
+            <div id="activeConversationTitle" class="active-conversation-title">New chat</div>
+            <div id="messages" class="messages"></div>
+            <div class="input-area">
+                <form id="chatForm">
+                    <input
+                        type="text"
+                        id="messageInput"
+                        placeholder="Ask a question; arithmetic problems use the calculator"
+                        autocomplete="off"
+                    >
+                    <button type="submit" id="sendButton">Send</button>
+                </form>
+                <p class="input-hint">Expressions, calculator results, and generation details are saved with each turn.</p>
+            </div>
+        </main>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

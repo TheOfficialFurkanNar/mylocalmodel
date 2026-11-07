@@ -15,21 +15,21 @@ class CLIChat:
     CALCULATOR_EXAMPLES = [
         (
             "A jacket costs $80, has a 25% discount, and then 8% sales tax is applied to the discounted price. What is the final price?",
-            "<think>1. The original price is $80. 2. A 25% discount leaves 1 - 25/100 = 0.75 of the price. 3. Sales tax is applied after the discount, so increase the discounted price by a factor of 1 + 8/100 = 1.08.</think>\n<calculator>80 * (1 - 25 / 100) * (1 + 8 / 100)</calculator>",
+            "<calculator>80 * (1 - 25 / 100) * (1 + 8 / 100)</calculator>",
             "Calculator result for 80 * (1 - 25 / 100) * (1 + 8 / 100): 64.8",
-            "<think>1. The calculator result is 64.8 dollars. 2. The discount is $80 * 25/100 = 20$ dollars, leaving $80 - 20 = 60$ dollars. 3. Tax on $60 is $60 * 8/100 = 4.80$ dollars. 4. Add the tax: $60 + 4.80 = 64.80$ dollars.</think>\nThe final price is **$64.80**.",
+            "The 25% discount gives $80 * (1 - 25/100) = $60$. Tax then adds $60 * 8/100 = $4.80$, so the final price is **$64.80**.",
         ),
         (
             "There are 5 bags with 12 apples in each bag. Each apple weighs 50 grams. What is the total weight?",
-            "<think>1. There are 5 bags with 12 apples each, so multiply 5 by 12 to get the number of apples. 2. Multiply that count by 50 grams per apple to get total grams. 3. Divide grams by 1000 to convert the result to kilograms.</think>\n<calculator>5 * 12 * 50</calculator>",
+            "<calculator>5 * 12 * 50</calculator>",
             "Calculator result for 5 * 12 * 50: 3000",
-            "<think>1. The calculator gives 3000 grams. 2. There are $5 * 12 = 60$ apples, and $60 * 50 = 3000$ grams. 3. Since 1000 grams equal 1 kilogram, $3000 / 1000 = 3$ kilograms.</think>\nThe total weight is **3000 grams, or 3 kilograms**.",
+            "There are $5 * 12 = 60$ apples. At 50 grams each, their total weight is $3000$ grams, or **3 kilograms**.",
         ),
         (
             "What is 17% of 240?",
-            "<think>1. '17 percent of 240' means 17/100 multiplied by 240. 2. Evaluate that product to find the requested amount.</think>\n<calculator>240 * 17 / 100</calculator>",
+            "<calculator>240 * 17 / 100</calculator>",
             "Calculator result for 240 * 17 / 100: 40.8",
-            "<think>1. The calculator result is 40.8. 2. This is the amount corresponding to 17% of 240.</think>\n17 percent of 240 is $17 / 100 * 240 = 40.8$.",
+            "17 percent of 240 is $240 * 17/100 = 40.8$.",
         ),
     ]
 
@@ -69,20 +69,25 @@ class CLIChat:
     def build_prompt(self, user_input: str) -> str:
         """Construct multi-turn instruction prompt using Qwen chat template."""
         messages = []
+        include_calculator = self.question_requires_calculation(user_input)
         
         # Add system prompt if configured
         if self.config.system_prompt:
-            messages.append({"role": "system", "content": self.config.system_prompt})
+            system_content = self.config.system_prompt
+            if include_calculator:
+                system_content += " " + self.config.calculator_prompt
+            messages.append({"role": "system", "content": system_content})
 
         # Show small-model examples of translating word problems into one
         # calculator expression, then grounding the answer in the tool result.
-        for question, tool_call, tool_result, answer in self.CALCULATOR_EXAMPLES:
-            messages.extend([
-                {"role": "user", "content": question},
-                {"role": "assistant", "content": tool_call},
-                {"role": "user", "content": f"{tool_result}\nAnswer the question using this result."},
-                {"role": "assistant", "content": answer},
-            ])
+        if include_calculator:
+            for question, tool_call, tool_result, answer in self.CALCULATOR_EXAMPLES:
+                messages.extend([
+                    {"role": "user", "content": question},
+                    {"role": "assistant", "content": tool_call},
+                    {"role": "user", "content": f"{tool_result}\nAnswer the question using this result."},
+                    {"role": "assistant", "content": answer},
+                ])
         
         # Append historical turns
         for user_msg, ai_msg in self.conversation_history:
@@ -244,8 +249,7 @@ class CLIChat:
             ):
                 retry_prompt = (
                     f"{user_input}\n\nYou must use the calculator before answering. "
-                    "Show the task-relevant steps in <think>...</think> to identify "
-                    "the quantities and operations, then output exactly one "
+                    "Identify the quantities and operations, then output exactly one "
                     "valid math expression inside <calculator>...</calculator>. Do not "
                     "give the answer yet."
                 )
@@ -256,7 +260,7 @@ class CLIChat:
             # Resolve calculator requests and give the result (or error) back to the model.
             last_calculator_error = None
             calculation_succeeded = False
-            for _ in range(2):
+            for _ in range(2 if requires_calculator else 0):
                 tool_call = re.search(r"<calculator>(.*?)</calculator>", response_text, re.DOTALL | re.IGNORECASE)
                 if tool_call is None:
                     break
@@ -313,6 +317,9 @@ class CLIChat:
                 )
 
             response_text = re.sub(r"<calculator>.*?</calculator>", "[calculator request could not be completed]", response_text, flags=re.DOTALL | re.IGNORECASE)
+            response_text = re.sub(r"<think\b[^>]*>.*?</think\s*>", "", response_text, flags=re.DOTALL | re.IGNORECASE)
+            response_text = re.sub(r"<think\b[^>]*>.*$", "", response_text, flags=re.DOTALL | re.IGNORECASE)
+            response_text = re.sub(r"</?think\s*>", "", response_text, flags=re.IGNORECASE).strip()
 
             if self.config.show_candidate_scores:
                 print(f"\n--- Best-of-{self.config.best_of_n} Candidate Scores ---")

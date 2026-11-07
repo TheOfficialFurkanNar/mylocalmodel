@@ -1,6 +1,6 @@
 # mylocalmodel
 
-A small CUDA-based command-line chat application for Qwen instruct models. Each turn samples multiple responses, ranks them by temperature-scaled, length-normalized token log-likelihood, and continues the conversation with the highest-scoring response.
+A CUDA-based chat application for Qwen instruct models, with both a command-line interface and a browser-based chat interface. Each turn samples multiple responses, ranks them by temperature-scaled, length-normalized token log-likelihood, and returns the highest-scoring response.
 
 ## Features
 
@@ -11,6 +11,14 @@ A small CUDA-based command-line chat application for Qwen instruct models. Each 
 - Can load a model from Hugging Face or from a local model directory.
 - Drops the oldest conversation turns when the prompt exceeds the configured context budget.
 - Includes a restricted calculator tool for arithmetic, numeric functions, and selected symbolic-calculus operations.
+- **Process-isolated calculator evaluation** with hard timeout protection (2 seconds) for security and stability.
+- **AST-based expression validation** with depth, node count, and size limits to prevent malicious or pathological inputs.
+- **Repetition penalty and n-gram prevention** (configurable penalty, 3-gram blocking) to reduce repetitive generation.
+- **Separate generation and calibration temperatures** for independent control of sampling diversity and ranking confidence.
+- **Automatic calculator preference** during retry: when tool use is required, the system prefers candidates that include calculator calls.
+- Adds calculator instructions and few-shot examples only to prompts classified as requiring math, keeping ordinary factual prompts focused on the user's question.
+- Provides a browser chat with persistent conversation history, per-turn generation and tool metadata, and controls to reopen or delete conversations.
+- Keeps conversation contents and calculator audit logs in local files excluded from Git.
 
 ## Examples
 
@@ -93,6 +101,8 @@ python run.py
 
 The default model is `Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF`, using its `q4_k_m` file. Transformers downloads the model from Hugging Face on the first run unless `local_model_path` is set in `config.py` to a local Transformers model directory. Type `quit` or `exit` to end the session.
 
+To use the web chat with the conversation sidebar, start the API and UI with `python web_backend.py`, then open `http://127.0.0.1:8000` in your browser.
+
 ## Configuration
 
 Edit the defaults in `config.py` (`ChatConfig`) before launching. Common settings include:
@@ -103,20 +113,42 @@ Edit the defaults in `config.py` (`ChatConfig`) before launching. Common setting
 | `gguf_file` | `qwen2.5-coder-1.5b-instruct-q4_k_m.gguf` | GGUF quantization file loaded from the repository |
 | `local_model_path` | empty | Local Transformers model directory; takes precedence over the Hub model and GGUF file |
 | `attention_implementation` | `sdpa` | PyTorch scaled dot product attention; uses a fused CUDA attention kernel when supported |
-| `best_of_n` | `8` | Number of candidates generated in one batch |
+| `best_of_n` | `4` | Number of candidates generated in one batch |
 | `max_length` | `8192` | Prompt context budget, including generation allowance |
 | `max_new_tokens` | `2048` | Maximum tokens generated per candidate |
 | `temperature` | `0.7` | Sampling temperature used during generation |
-| `calibration_temperature` | `0.8` | Temperature used when scoring candidate token probabilities |
+| `calibration_temperature` | `1.143` | Temperature for scoring (T_gen × T_calib = 0.8 effective) |
 | `top_k` / `top_p` | `40` / `0.9` | Sampling filters |
+| `repetition_penalty` | `1.15` | Penalty factor to reduce repetitive token generation |
 | `show_candidate_scores` | `True` | Whether to print candidate scores and token counts |
-| `system_prompt` | calculator and formatting instructions | Asks for task-relevant math steps in a visible `<think>` block, calculator use, units, and inline LaTeX |
+| `system_prompt` | concise general instructions | Keeps answers on topic and uses inline LaTeX for equations |
+| `calculator_prompt` | calculator syntax and usage instructions | Added only for recognized math questions, together with calculator examples |
 
 Lower `best_of_n` or `max_new_tokens` to reduce GPU memory use and generation time. Increasing `best_of_n` samples more candidates, but does not guarantee a better answer; selection relies on the model's own token likelihoods. The `sdpa` attention setting uses PyTorch's scaled dot product attention, which can dispatch to its fused Flash Attention CUDA kernel when the GPU, dtype, and installed PyTorch build support it; otherwise PyTorch selects another supported SDPA kernel. This is distinct from Dao-AILab's standalone FlashAttention-2 package, whose maintainers describe Windows support as experimental. The GGUF weights are loaded through Transformers and dequantized into a float16 PyTorch model for this application's CUDA generation and scoring path; this is not llama.cpp inference and does not preserve the GGUF file's packed low-memory representation.
 
 ## Calculator tool
 
 For arithmetic word problems, the application checks that the selected response calls the calculator using `<calculator>expression</calculator>`. If it does not, the model gets one tool-only retry; among retry candidates, the app prefers one that includes a calculator call. The calculator evaluates the expression and returns the result to the model before it writes its answer. The tool tag must contain one math expression only; assignments and `print` calls are rejected. If evaluation fails, the model is asked to retry with a valid expression. If no calculator call is produced or calculation attempts fail, the app returns an explicit failure instead of an unverified numeric answer. Calculator requests are limited to two rounds per response.
+
+### Calculator prompting
+
+Short few-shot examples demonstrate the calculator call format, returned result, and concise answer. Calculator instructions and examples are added only for prompts classified as math questions; recognized calculation prompts get one retry if the model skips the tool. Calculator calls are not executed for questions classified as non-math. The result is supplied to the model before it answers. A valid expression can still encode the wrong interpretation of a word problem, so the calculator verifies arithmetic for the supplied expression but not that the expression matches the question.
+
+### Conversation history
+
+The web app saves conversations locally in `conversation_history.json` and shows them in the left sidebar. Select a conversation to reopen it, start a new conversation, or use its × button to delete it after confirming. Each turn stores the user message, assistant response, UTC timestamp, total response duration, calculator usage and results, model and generation settings, the accepted Best-of-N candidate, and score metadata for each candidate run. Metadata is stored separately from message text and is not added to the model's conversation prompt. The conversation file is ignored by Git because it contains local chat content. The command-line interface keeps its conversation history in memory for the current run only.
+
+### Security and isolation
+
+The calculator runs in a **separate subprocess** with a hard 2-second timeout, preventing runaway symbolic computations from blocking the main application. Expression evaluation uses **AST parsing** with multiple safety limits:
+
+- Maximum expression length: 512 characters
+- Maximum AST node count: 100 operations
+- Maximum AST depth: 20 nesting levels
+- Maximum exponent magnitude: 10,000
+- Maximum output length: 2,000 characters
+
+These restrictions prevent malicious or pathological inputs while supporting practical mathematical operations. The calculator does not use Python `eval`; it evaluates a restricted subset of operations through a custom AST walker.
 
 Each calculator call is also appended to `calculator_calls.jsonl` in the project directory. Records include the UTC timestamp, original question, expression, success or failure, result or error, and elapsed time. This local audit log is not inserted into the model prompt or conversation history and is ignored by Git.
 
@@ -137,9 +169,12 @@ Inputs are restricted by expression length, syntax depth, exponent size, and res
 ## Project files
 
 - `run.py` — model loading, prompt construction, batched generation, response selection, and interactive CLI.
+- `web_backend.py` — FastAPI chat API, Best-of-N web generation, calculator flow, and local conversation persistence.
+- `static/` — web chat UI with conversation history and per-turn calculator/candidate metadata.
 - `config.py` — model, generation, scoring, and stop-sequence settings.
-- `calibration.py` — temperature scaling and length-normalized candidate scoring.
-- `tools/calculator.py` — restricted arithmetic and SymPy calculus evaluator used by model tool requests.
+- `calibration.py` — temperature scaling, length-normalized candidate scoring, and confidence metrics computation.
+- `tools/calculator.py` — restricted arithmetic and SymPy calculus evaluator with AST-based validation.
+- `tools/calculator_worker.py` — isolated subprocess entry point for secure calculator evaluation.
 - `requirements.txt` — Python dependencies.
 - `LICENSE` — MIT License.
 
@@ -184,7 +219,7 @@ This value is what the CLI displays as `geom_mean_prob` (as a percentage). Highe
 
 - The implementation loads the full model onto the CUDA device; it does not currently configure quantization, CPU offloading, or automatic device mapping.
 - EOS ends generation normally. Configured stop strings are removed from decoded output after generation, so generation may continue beyond a configured stop string until EOS or the token limit.
-- Conversation history is held in memory for the current run and is not saved between sessions.
+- The browser interface saves conversations between sessions in `conversation_history.json`; the command-line interface does not persist conversation history.
 
 ## License
 
