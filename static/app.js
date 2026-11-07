@@ -232,8 +232,131 @@ function updateAssistantText(assistantId, value) {
         answer.id = `answer-${assistantId}`;
         content.appendChild(answer);
     }
-    answer.textContent = value;
+    if (window.marked && window.DOMPurify) {
+        const protectedMath = protectLatexDelimiters(value);
+        const markdown = window.marked.parse(protectedMath.text, { gfm: true, breaks: true });
+        answer.innerHTML = window.DOMPurify.sanitize(markdown, { USE_PROFILES: { html: true } });
+        if (window.renderMathInElement) {
+            restoreLatexDelimiters(answer, protectedMath.expressions);
+            addInlineMathDelimiters(answer);
+            window.renderMathInElement(answer, {
+                delimiters: [
+                    { left: '$$', right: '$$', display: true },
+                    { left: '\\[', right: '\\]', display: true },
+                    { left: '\\(', right: '\\)', display: false },
+                    { left: '$', right: '$', display: false }
+                ],
+                throwOnError: false
+            });
+        }
+    } else {
+        answer.textContent = value;
+    }
     scrollToBottom();
+}
+
+function protectLatexDelimiters(value) {
+    const expressions = [];
+    const delimiters = /\\\[([\s\S]*?)\\\]|\\\(([\s\S]*?)\\\)|\$\$([\s\S]*?)\$\$|\$([^\n$]+?)\$/g;
+    const text = value.replace(delimiters, (expression, displayBracket, inlineParen, displayDollar, inlineDollar) => {
+        const index = expressions.push(expression) - 1;
+        return `LATEXPLACEHOLDER${index}TOKEN`;
+    });
+    return { text, expressions };
+}
+
+function restoreLatexDelimiters(root, expressions) {
+    if (!expressions.length) return;
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const textNodes = [];
+    while (walker.nextNode()) textNodes.push(walker.currentNode);
+    const placeholderPattern = /LATEXPLACEHOLDER(\d+)TOKEN/g;
+    for (const node of textNodes) {
+        const text = node.nodeValue;
+        const chunks = [];
+        let cursor = 0;
+        let match;
+        while ((match = placeholderPattern.exec(text)) !== null) {
+            chunks.push(document.createTextNode(text.slice(cursor, match.index)));
+            chunks.push(document.createTextNode(expressions[Number(match[1])] || match[0]));
+            cursor = match.index + match[0].length;
+        }
+        if (cursor > 0) {
+            chunks.push(document.createTextNode(text.slice(cursor)));
+            const fragment = document.createDocumentFragment();
+            chunks.forEach((chunk) => fragment.appendChild(chunk));
+            node.replaceWith(fragment);
+        }
+        placeholderPattern.lastIndex = 0;
+    }
+}
+
+function addInlineMathDelimiters(root) {
+    const groupedCommands = new Map([
+        ['frac', 2], ['dfrac', 2], ['tfrac', 2], ['sqrt', 1],
+        ['text', 1], ['mathrm', 1], ['mathbf', 1], ['mathit', 1],
+        ['overline', 1], ['underline', 1]
+    ]);
+    const mathCommands = new Set([
+        ...groupedCommands.keys(), 'pi', 'theta', 'alpha', 'beta', 'gamma', 'delta',
+        'lambda', 'mu', 'sigma', 'omega', 'pm', 'mp', 'times', 'cdot', 'div',
+        'neq', 'leq', 'geq', 'approx', 'partial', 'infty', 'sum', 'prod', 'int',
+        'log', 'ln', 'sin', 'cos', 'tan', 'exp', 'lim', 'to'
+    ]);
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const textNodes = [];
+    while (walker.nextNode()) textNodes.push(walker.currentNode);
+
+    for (const node of textNodes) {
+        if (node.parentElement?.closest('code, pre, .katex') || /\$|\\\(|\\\[/.test(node.nodeValue)) continue;
+        const text = node.nodeValue;
+        const commandPattern = /\\([a-zA-Z]+)/g;
+        const chunks = [];
+        let cursor = 0;
+        let match;
+        while ((match = commandPattern.exec(text)) !== null) {
+            const command = match[1];
+            if (!mathCommands.has(command)) continue;
+            let end = match.index + match[0].length;
+            const argumentCount = groupedCommands.get(command) || 0;
+            let valid = true;
+            for (let argument = 0; argument < argumentCount; argument += 1) {
+                while (/\s/.test(text[end] || '') && end < text.length) end += 1;
+                if (command === 'sqrt' && argument === 0 && text[end] === '[') {
+                    const optionalEnd = text.indexOf(']', end + 1);
+                    if (optionalEnd >= 0) end = optionalEnd + 1;
+                    while (/\s/.test(text[end] || '') && end < text.length) end += 1;
+                }
+                if (text[end] !== '{') {
+                    valid = false;
+                    break;
+                }
+                let depth = 0;
+                let groupEnd = end;
+                for (; groupEnd < text.length; groupEnd += 1) {
+                    if (text[groupEnd] === '{' && text[groupEnd - 1] !== '\\') depth += 1;
+                    if (text[groupEnd] === '}' && text[groupEnd - 1] !== '\\') depth -= 1;
+                    if (depth === 0) break;
+                }
+                if (depth !== 0) {
+                    valid = false;
+                    break;
+                }
+                end = groupEnd + 1;
+            }
+            if (!valid || match.index < cursor) continue;
+            chunks.push(document.createTextNode(text.slice(cursor, match.index)));
+            chunks.push(document.createTextNode(`\\(${text.slice(match.index, end)}\\)`));
+            cursor = end;
+            commandPattern.lastIndex = end;
+        }
+        if (cursor > 0) {
+            chunks.push(document.createTextNode(text.slice(cursor)));
+            const fragment = document.createDocumentFragment();
+            chunks.forEach((chunk) => fragment.appendChild(chunk));
+            node.replaceWith(fragment);
+        }
+    }
 }
 
 function renderToolCallCard(assistantId, index, toolCall) {

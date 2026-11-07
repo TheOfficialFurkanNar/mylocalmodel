@@ -226,8 +226,67 @@ h1 {
     border: 1px solid #e5e7eb;
     padding: 0.75rem 1rem;
     border-radius: 0.5rem;
-    white-space: pre-wrap;
+    white-space: normal;
+    overflow-wrap: anywhere;
     color: #111827;
+}
+
+.assistant-text > :first-child {
+    margin-top: 0;
+}
+
+.assistant-text > :last-child {
+    margin-bottom: 0;
+}
+
+.assistant-text p,
+.assistant-text ul,
+.assistant-text ol,
+.assistant-text blockquote,
+.assistant-text table,
+.assistant-text pre {
+    margin: 0.65rem 0;
+}
+
+.assistant-text ul,
+.assistant-text ol {
+    padding-left: 1.5rem;
+}
+
+.assistant-text blockquote {
+    padding-left: 0.75rem;
+    border-left: 3px solid #d1d5db;
+    color: #4b5563;
+}
+
+.assistant-text pre {
+    overflow-x: auto;
+    padding: 0.75rem;
+    border-radius: 0.35rem;
+    background: #f3f4f6;
+}
+
+.assistant-text code {
+    font-family: Consolas, 'Courier New', monospace;
+    font-size: 0.9em;
+}
+
+.assistant-text :not(pre) > code {
+    padding: 0.1rem 0.25rem;
+    border-radius: 0.2rem;
+    background: #f3f4f6;
+}
+
+.assistant-text table {
+    border-collapse: collapse;
+    width: 100%;
+}
+
+.assistant-text th,
+.assistant-text td {
+    padding: 0.35rem 0.55rem;
+    border: 1px solid #d1d5db;
+    text-align: left;
 }
 
 /* Tool Call Card */

@@ -18,6 +18,7 @@ A CUDA-based chat application for Qwen instruct models, with both a command-line
 - **Automatic calculator preference** during retry: when tool use is required, the system prefers candidates that include calculator calls.
 - Adds calculator instructions and few-shot examples only to prompts classified as requiring math, keeping ordinary factual prompts focused on the user's question.
 - Provides a browser chat with persistent conversation history, per-turn generation and tool metadata, and controls to reopen or delete conversations.
+- Renders assistant Markdown, fenced code blocks, and inline or display LaTeX in the browser chat. Common unwrapped commands such as `\frac{1}{2}` are automatically given inline math delimiters; generated HTML is sanitized before display.
 - Keeps conversation contents and calculator audit logs in local files excluded from Git.
 
 ## Examples
@@ -121,7 +122,7 @@ Edit the defaults in `config.py` (`ChatConfig`) before launching. Common setting
 | `top_k` / `top_p` | `40` / `0.9` | Sampling filters |
 | `repetition_penalty` | `1.15` | Penalty factor to reduce repetitive token generation |
 | `show_candidate_scores` | `True` | Whether to print candidate scores and token counts |
-| `system_prompt` | concise general instructions | Keeps answers on topic and uses inline LaTeX for equations |
+| `system_prompt` | concise general instructions | Keeps answers on topic, uses inline LaTeX for equations, and asks for fenced code blocks |
 | `calculator_prompt` | calculator syntax and usage instructions | Added only for recognized math questions, together with calculator examples |
 
 Lower `best_of_n` or `max_new_tokens` to reduce GPU memory use and generation time. Increasing `best_of_n` samples more candidates, but does not guarantee a better answer; selection relies on the model's own token likelihoods. The `sdpa` attention setting uses PyTorch's scaled dot product attention, which can dispatch to its fused Flash Attention CUDA kernel when the GPU, dtype, and installed PyTorch build support it; otherwise PyTorch selects another supported SDPA kernel. This is distinct from Dao-AILab's standalone FlashAttention-2 package, whose maintainers describe Windows support as experimental. The GGUF weights are loaded through Transformers and dequantized into a float16 PyTorch model for this application's CUDA generation and scoring path; this is not llama.cpp inference and does not preserve the GGUF file's packed low-memory representation.

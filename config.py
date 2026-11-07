@@ -13,7 +13,8 @@ class ChatConfig:
     system_prompt: str = (
         "You are a careful assistant. Answer the user's actual request directly and stay "
         "on topic. Do not introduce unrelated calculations. Use inline LaTeX for any "
-        "equations you include."
+        "equations you include. When you provide code, format it as a fenced Markdown "
+        "code block and include a language label when appropriate."
     )
     calculator_prompt: str = (
         "For math questions that require calculation, identify the relevant values and "
