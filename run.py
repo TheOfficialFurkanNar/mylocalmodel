@@ -9,6 +9,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from config import ChatConfig
 from calibration import SimpleTemperatureScaler
 from tools.calculator import calculate
+from tools.rag import get_rag
 
 
 class CLIChat:
@@ -60,13 +61,24 @@ class CLIChat:
         self.scaler = SimpleTemperatureScaler(config)
         self.conversation_history = []
 
+        # Initialize RAG retriever if enabled
+        if self.config.enable_rag:
+            print("Initializing RAG retriever...")
+            try:
+                self.rag = get_rag(device=self.device)
+            except Exception as exc:
+                print(f"Warning: Could not initialize RAG retriever: {exc}")
+                self.rag = None
+        else:
+            self.rag = None
+
         # Set pad token if not present
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
         print("Model loaded successfully!\n")
 
-    def build_prompt(self, user_input: str) -> str:
+    def build_prompt(self, user_input: str, rag_context: str = None, history: list = None) -> str:
         """Construct multi-turn instruction prompt using Qwen chat template."""
         messages = []
         include_calculator = self.question_requires_calculation(user_input)
@@ -89,13 +101,15 @@ class CLIChat:
                     {"role": "assistant", "content": answer},
                 ])
         
-        # Append historical turns
-        for user_msg, ai_msg in self.conversation_history:
+        # Append historical turns (without mutating self.conversation_history)
+        history_list = list(self.conversation_history if history is None else history)
+        for user_msg, ai_msg in history_list:
             messages.append({"role": "user", "content": user_msg})
             messages.append({"role": "assistant", "content": ai_msg})
         
-        # Append current user prompt
-        messages.append({"role": "user", "content": user_input})
+        # Append current user prompt with injected RAG context if available
+        current_content = f"{rag_context}\n\n{user_input}" if rag_context else user_input
+        messages.append({"role": "user", "content": current_content})
         
         # Apply chat template
         full_prompt = self.tokenizer.apply_chat_template(
@@ -107,10 +121,8 @@ class CLIChat:
         # Tokenize and trim context if prompt exceeds max_length
         tokens = self.tokenizer.encode(full_prompt)
         max_allowed = self.config.max_length - self.config.max_new_tokens
-        if len(tokens) > max_allowed and len(self.conversation_history) > 0:
-            # If history is too long, drop earlier turns
-            self.conversation_history.pop(0)
-            return self.build_prompt(user_input)
+        if len(tokens) > max_allowed and len(history_list) > 0:
+            return self.build_prompt(user_input, rag_context=rag_context, history=history_list[1:])
 
         return full_prompt
 
@@ -140,13 +152,13 @@ class CLIChat:
         except OSError as exc:
             print(f"Warning: Could not write calculator audit log: {exc}")
 
-    def generate_best_of_n_response(self, user_input: str, require_calculator: bool = False):
+    def generate_best_of_n_response(self, user_input: str, rag_context: str = None, require_calculator: bool = False):
         """
         Sample N candidate responses in parallel via GPU batching,
         score each candidate using length-normalized log-likelihood,
         and select the candidate with highest calibrated confidence.
         """
-        full_prompt = self.build_prompt(user_input)
+        full_prompt = self.build_prompt(user_input, rag_context=rag_context)
 
         inputs = self.tokenizer.encode(full_prompt, return_tensors="pt").to(self.device)
         input_length = inputs.shape[1]
@@ -226,7 +238,7 @@ class CLIChat:
         }
 
     def chat(self):
-        print("=== CLI Chat with Best-of-N Calibrated GPT-2 Instruct Model ===")
+        print("=== CLI Chat with Best-of-N Calibrated Qwen Instruct Model ===")
         print(
             f"Sampling Best-of-{self.config.best_of_n} candidates per turn (T_gen={self.config.temperature}, T_calib={self.config.calibration_temperature})\n")
         print("Type 'quit' or 'exit' to end the conversation\n")
@@ -241,7 +253,22 @@ class CLIChat:
             if not user_input:
                 continue
 
-            response_text, info = self.generate_best_of_n_response(user_input)
+            # Automatic RAG Pre-Retrieval
+            rag_context = None
+            if self.config.enable_rag and self.rag is not None:
+                try:
+                    matches = self.rag.retrieve(
+                        user_input,
+                        top_k=self.config.rag_top_k,
+                        max_distance=self.config.rag_max_distance,
+                    )
+                    if matches:
+                        rag_context = self.rag.format_context(matches)
+                        print(f"📚 Retrieved {len(matches)} reference item(s) from Wikipedia QA (distance <= {self.config.rag_max_distance})")
+                except Exception as rag_err:
+                    print(f"Warning: RAG retrieval failed: {rag_err}")
+
+            response_text, info = self.generate_best_of_n_response(user_input, rag_context=rag_context)
 
             requires_calculator = self.question_requires_calculation(user_input)
             if requires_calculator and not re.search(

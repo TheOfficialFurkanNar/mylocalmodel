@@ -19,6 +19,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from calibration import SimpleTemperatureScaler
 from config import ChatConfig
 from tools.calculator import calculate
+from tools.rag import get_rag
 
 
 def utc_now() -> str:
@@ -166,12 +167,23 @@ class ChatModel:
         ).to(self.device)
         self.scaler = SimpleTemperatureScaler(self.config)
 
+        # Initialize RAG retriever if enabled
+        if self.config.enable_rag:
+            print("Initializing RAG retriever...")
+            try:
+                self.rag = get_rag(device=self.device)
+            except Exception as exc:
+                print(f"Warning: Could not initialize RAG retriever: {exc}")
+                self.rag = None
+        else:
+            self.rag = None
+
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
         print("Model loaded successfully!")
 
-    def build_prompt(self, user_input: str, history: list = None) -> str:
+    def build_prompt(self, user_input: str, history: list = None, rag_context: str = None) -> str:
         messages = []
         include_calculator = self.question_requires_calculation(user_input)
         if self.config.system_prompt:
@@ -194,17 +206,19 @@ class ChatModel:
                 {"role": "user", "content": user_message},
                 {"role": "assistant", "content": assistant_message},
             ])
-        messages.append({"role": "user", "content": user_input})
+
+        user_content = f"{rag_context}\n\n{user_input}" if rag_context else user_input
+        messages.append({"role": "user", "content": user_content})
 
         prompt = self.tokenizer.apply_chat_template(
             messages, tokenize=False, add_generation_prompt=True
         )
         if len(self.tokenizer.encode(prompt)) > self.config.max_length - self.config.max_new_tokens and history:
-            return self.build_prompt(user_input, history[1:])
+            return self.build_prompt(user_input, history[1:], rag_context=rag_context)
         return prompt
 
-    def generate_best_of_n_response(self, user_input: str, history: list = None, require_calculator=False):
-        prompt = self.build_prompt(user_input, history)
+    def generate_best_of_n_response(self, user_input: str, history: list = None, require_calculator=False, rag_context: str = None):
+        prompt = self.build_prompt(user_input, history, rag_context=rag_context)
         inputs = self.tokenizer.encode(prompt, return_tensors="pt").to(self.device)
         input_length = inputs.shape[1]
         candidate_count = self.config.best_of_n
@@ -312,7 +326,24 @@ class ChatModel:
         started = time.perf_counter()
         generation_runs = []
 
-        response, candidate_run = self.generate_best_of_n_response(question, history)
+        # Automatic RAG Pre-Retrieval
+        rag_matches = []
+        rag_context = None
+        if self.config.enable_rag and self.rag is not None:
+            try:
+                rag_matches = self.rag.retrieve(
+                    question,
+                    top_k=self.config.rag_top_k,
+                    max_distance=self.config.rag_max_distance,
+                )
+                if rag_matches:
+                    rag_context = self.rag.format_context(rag_matches)
+            except Exception as rag_err:
+                print(f"Warning: RAG retrieval failed: {rag_err}")
+
+        response, candidate_run = self.generate_best_of_n_response(
+            question, history, rag_context=rag_context
+        )
         candidate_run["stage"] = "initial"
         generation_runs.append(candidate_run)
         needs_calculator = self.question_requires_calculation(question)
@@ -410,6 +441,8 @@ class ChatModel:
             "attention_implementation": self.config.attention_implementation,
             "tool_used": bool(tool_calls),
             "tool_calls": tool_calls,
+            "rag_used": bool(rag_matches),
+            "rag_matches": rag_matches,
             "max_length": self.config.max_length,
             "max_new_tokens": self.config.max_new_tokens,
             "best_of_n": self.config.best_of_n,

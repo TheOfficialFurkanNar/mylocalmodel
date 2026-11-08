@@ -63,19 +63,31 @@ async function sendMessage(question, assistantId) {
             body: JSON.stringify({ message: question, conversation_id: currentConversationId }),
             signal: controller.signal
         });
-        if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        if (!response.ok) {
+            let detail = response.statusText;
+            try {
+                const errData = await response.json();
+                if (errData.detail) detail = errData.detail;
+                else if (errData.error) detail = errData.error;
+            } catch (_) {}
+            throw new Error(`HTTP ${response.status}: ${detail}`);
+        }
         const data = await response.json();
         if (data.error) throw new Error(data.error);
 
         currentConversationId = data.conversation_id;
         localStorage.setItem('localqwen-current-conversation', currentConversationId);
+        if (data.metadata?.rag_matches?.length) {
+            renderRAGCard(assistantId, data.metadata.rag_matches);
+        }
         (data.metadata?.tool_calls || []).forEach((toolCall, index) => {
             renderToolCallCard(assistantId, index, toolCall);
         });
         updateAssistantText(assistantId, data.response || '');
         renderMetadataCard(assistantId, data.metadata || {});
         removeLoadingIndicator(assistantId);
-        conversationTitle.textContent = question.slice(0, 58) || 'New chat';
+        const cleanTitle = question.replace(/\s+/g, ' ').trim();
+        conversationTitle.textContent = cleanTitle ? (cleanTitle.slice(0, 58) + (cleanTitle.length > 58 ? '…' : '')) : 'New chat';
         await refreshConversationList();
     } catch (error) {
         if (error.name === 'AbortError') throw new Error('Request timed out after 5 minutes');
@@ -162,6 +174,9 @@ async function openConversation(conversationId) {
                 const assistantId = message.id || `assistant-${Date.now()}-${Math.random()}`;
                 renderAssistantShell(assistantId);
                 const metadata = message.metadata || {};
+                if (metadata.rag_matches?.length) {
+                    renderRAGCard(assistantId, metadata.rag_matches);
+                }
                 (metadata.tool_calls || []).forEach((toolCall, index) => {
                     renderToolCallCard(assistantId, index, toolCall);
                 });
@@ -233,21 +248,27 @@ function updateAssistantText(assistantId, value) {
         content.appendChild(answer);
     }
     if (window.marked && window.DOMPurify) {
-        const protectedMath = protectLatexDelimiters(value);
-        const markdown = window.marked.parse(protectedMath.text, { gfm: true, breaks: true });
-        answer.innerHTML = window.DOMPurify.sanitize(markdown, { USE_PROFILES: { html: true } });
-        if (window.renderMathInElement) {
-            restoreLatexDelimiters(answer, protectedMath.expressions);
-            addInlineMathDelimiters(answer);
-            window.renderMathInElement(answer, {
-                delimiters: [
-                    { left: '$$', right: '$$', display: true },
-                    { left: '\\[', right: '\\]', display: true },
-                    { left: '\\(', right: '\\)', display: false },
-                    { left: '$', right: '$', display: false }
-                ],
-                throwOnError: false
-            });
+        try {
+            const protectedMath = protectLatexDelimiters(value);
+            const parseFn = typeof window.marked.parse === 'function' ? window.marked.parse.bind(window.marked) : window.marked;
+            const markdown = parseFn(protectedMath.text, { gfm: true, breaks: true });
+            answer.innerHTML = window.DOMPurify.sanitize(markdown, { USE_PROFILES: { html: true } });
+            if (window.renderMathInElement) {
+                restoreLatexDelimiters(answer, protectedMath.expressions);
+                addInlineMathDelimiters(answer);
+                window.renderMathInElement(answer, {
+                    delimiters: [
+                        { left: '$$', right: '$$', display: true },
+                        { left: '\\[', right: '\\]', display: true },
+                        { left: '\\(', right: '\\)', display: false },
+                        { left: '$', right: '$', display: false }
+                    ],
+                    throwOnError: false
+                });
+            }
+        } catch (renderError) {
+            console.warn('Rich text rendering failed, falling back to plain text:', renderError);
+            answer.textContent = value;
         }
     } else {
         answer.textContent = value;
@@ -359,6 +380,37 @@ function addInlineMathDelimiters(root) {
     }
 }
 
+function renderRAGCard(assistantId, matches) {
+    const content = document.getElementById(`message-content-${assistantId}`);
+    if (!content || !matches || !matches.length) return;
+    const card = document.createElement('details');
+    card.className = 'rag-card';
+    const summary = document.createElement('summary');
+    summary.textContent = `📚 Wikipedia QA Reference · ${matches.length} match${matches.length > 1 ? 'es' : ''}`;
+    card.appendChild(summary);
+
+    matches.forEach((match, idx) => {
+        const item = document.createElement('div');
+        item.className = 'rag-item';
+
+        const q = document.createElement('div');
+        q.className = 'rag-q';
+        q.textContent = `Q: ${match.question || ''}`;
+
+        const a = document.createElement('div');
+        a.className = 'rag-a';
+        a.textContent = `A: ${match.answer || ''}`;
+
+        const score = document.createElement('div');
+        score.className = 'rag-score';
+        score.textContent = `Distance: ${match.distance ?? 'n/a'} · Similarity: ${match.similarity ?? 'n/a'}`;
+
+        item.append(q, a, score);
+        card.appendChild(item);
+    });
+    content.appendChild(card);
+}
+
 function renderToolCallCard(assistantId, index, toolCall) {
     const content = document.getElementById(`message-content-${assistantId}`);
     if (!content) return;
@@ -385,6 +437,7 @@ function renderMetadataCard(assistantId, metadata) {
     appendMetadataLine(details, 'Duration', `${metadata.duration_seconds ?? 0} s`);
     appendMetadataLine(details, 'Model', metadata.model_name || '');
     appendMetadataLine(details, 'Calculator used', metadata.tool_used ? 'Yes' : 'No');
+    appendMetadataLine(details, 'RAG used', metadata.rag_used ? `Yes (${metadata.rag_matches?.length || 0} match(es))` : 'No');
     appendMetadataLine(details, 'Context / new token limit', `${metadata.max_length} / ${metadata.max_new_tokens}`);
     appendMetadataLine(details, 'Best-of-N', metadata.best_of_n);
     if (metadata.generation) {
