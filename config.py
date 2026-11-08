@@ -1,5 +1,26 @@
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import List
+
+
+@dataclass
+class RAGConfig:
+    """Configuration for the RAG retriever tool."""
+
+    max_cosine_distance: float = 0.75
+    embedding_model_name: str = "sentence-transformers/all-MiniLM-L6-v2"
+    dataset_name: str = "rag-datasets/rag-mini-wikipedia"
+    dataset_config: str = "question-answer"
+    cache_dir: Path = field(
+        default_factory=lambda: Path(__file__).resolve().parent / "tools" / "rag_cache"
+    )
+
+
+MAX_COSINE_DISTANCE = 0.75
+EMBEDDING_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
+DATASET_NAME = "rag-datasets/rag-mini-wikipedia"
+DATASET_CONFIG = "question-answer"
+DEFAULT_CACHE_DIR = Path(__file__).resolve().parent / "tools" / "rag_cache"
 
 
 @dataclass
@@ -38,6 +59,9 @@ class ChatConfig:
     repetition_penalty: float = 1.15
     best_of_n: int = 4  # Number of candidate responses to sample and score per turn
     show_candidate_scores: bool = True  # Display candidate scores and ranking in CLI output
+    enable_rag: bool = True  # Automatically retrieve relevant Wikipedia QA context
+    rag_max_distance: float = 0.65  # Maximum cosine distance threshold for context injection
+    rag_top_k: int = 3  # Number of reference QA pairs to inject into prompt
     stop_sequences: List[str] = field(default_factory=lambda: [
         "\nInstruction:",
         "\nResponse:",
@@ -46,7 +70,6 @@ class ChatConfig:
         "\nHuman:",
         "### Instruction:",
         "### Response:",
-        "###",
         "user:",
         "assistant:",
         "User:",

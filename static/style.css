@@ -289,6 +289,78 @@ h1 {
     text-align: left;
 }
 
+.assistant-text h1,
+.assistant-text h2,
+.assistant-text h3,
+.assistant-text h4 {
+    margin: 1rem 0 0.5rem;
+    color: #111827;
+    font-weight: 600;
+}
+
+.assistant-text h1 { font-size: 1.3rem; }
+.assistant-text h2 { font-size: 1.15rem; }
+.assistant-text h3 { font-size: 1.05rem; }
+.assistant-text h4 { font-size: 0.95rem; }
+
+.assistant-text a {
+    color: #2563eb;
+    text-decoration: underline;
+}
+
+.assistant-text img {
+    max-width: 100%;
+    height: auto;
+}
+
+.katex-display {
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 0.35rem 0;
+    margin: 0.75rem 0;
+}
+
+/* RAG Reference Card */
+.rag-card {
+    border: 1px solid #bbf7d0;
+    border-radius: 0.5rem;
+    background: #f0fdf4;
+    overflow: hidden;
+    padding: 0.65rem 0.9rem;
+    color: #166534;
+    font-size: 0.85rem;
+}
+
+.rag-card summary {
+    cursor: pointer;
+    font-weight: 600;
+    margin-bottom: 0.35rem;
+    color: #15803d;
+}
+
+.rag-item {
+    margin-top: 0.45rem;
+    padding-top: 0.45rem;
+    border-top: 1px solid #dcfce7;
+    line-height: 1.45;
+}
+
+.rag-q {
+    font-weight: 600;
+    color: #166534;
+}
+
+.rag-a {
+    color: #1e293b;
+    margin-top: 0.15rem;
+}
+
+.rag-score {
+    color: #64748b;
+    font-size: 0.75rem;
+    margin-top: 0.2rem;
+}
+
 /* Tool Call Card */
 .tool-card {
     border: 1px solid #e5e7eb;
