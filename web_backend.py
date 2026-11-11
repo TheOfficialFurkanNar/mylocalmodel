@@ -1,3 +1,5 @@
+import base64
+import importlib.metadata
 import json
 import math
 import re
@@ -10,8 +12,9 @@ from pathlib import Path
 from typing import Optional
 
 import torch
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -20,6 +23,7 @@ from calibration import SimpleTemperatureScaler
 from config import ChatConfig
 from tools.calculator import calculate
 from tools.rag import get_rag
+from tools.tts import get_tts, list_voices as tts_list_voices
 
 
 def utc_now() -> str:
@@ -468,6 +472,11 @@ conversation_store = ConversationStore(Path(__file__).resolve().parent / "conver
 async def lifespan(app: FastAPI):
     global chat_model
     print("Loading model on startup...")
+    try:
+        kokoro_version = importlib.metadata.version("kokoro-onnx")
+        print(f"kokoro-onnx version: {kokoro_version}")
+    except importlib.metadata.PackageNotFoundError:
+        print("kokoro-onnx version: not installed")
     chat_model = ChatModel()
     yield
     print("Shutting down...")
@@ -543,6 +552,45 @@ async def chat(request: ChatRequest):
 @app.get("/health")
 async def health():
     return {"status": "ok", "model_loaded": chat_model is not None}
+
+
+@app.get("/tts/voices")
+async def tts_voices():
+    """Return the available Kokoro TTS voice catalogue."""
+    return {"voices": tts_list_voices()}
+
+
+@app.get("/tts/stream")
+async def tts_stream(
+    text: str = Query(..., description="Text to synthesise"),
+    voice: str = Query("af_heart", description="Kokoro voice id"),
+):
+    """
+    Stream synthesised speech as Server-Sent Events.
+
+    Each SSE ``data:`` event carries a base64-encoded WAV blob for one sentence
+    chunk (24 kHz, 16-bit PCM mono).  A final ``event: done`` signals completion.
+    The client should decode each chunk and schedule it for sequential Web Audio
+    API playback.
+    """
+    tts = get_tts()
+
+    async def generate():
+        try:
+            async for samples, sample_rate in tts.synthesize_stream(text, voice=voice):
+                wav_bytes = tts.chunk_to_wav_bytes(samples, sample_rate)
+                b64 = base64.b64encode(wav_bytes).decode("ascii")
+                yield f"data: {b64}\n\n"
+        except Exception as exc:
+            yield f"event: error\ndata: {exc}\n\n"
+        finally:
+            yield "event: done\ndata: end\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.get("/")

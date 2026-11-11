@@ -101,25 +101,25 @@ To use the web chat with the conversation sidebar, start the API and UI with `py
 
 Edit the defaults in `config.py` (`ChatConfig`) before launching. Common settings include:
 
-| Setting | Default | Purpose |
-| --- | --- | --- |
-| `model_name` | `Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF` | Hugging Face model repository |
+| Setting | Default                                   | Purpose |
+| --- |-------------------------------------------| --- |
+| `model_name` | `Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF`   | Hugging Face model repository |
 | `gguf_file` | `qwen2.5-coder-1.5b-instruct-q4_k_m.gguf` | GGUF quantization file loaded from the repository |
-| `local_model_path` | empty | Local Transformers model directory; takes precedence over the Hub model and GGUF file |
-| `attention_implementation` | `sdpa` | PyTorch scaled dot product attention; uses a fused CUDA attention kernel when supported |
-| `best_of_n` | `4` | Number of candidates generated in one batch |
-| `max_length` | `8192` | Prompt context budget, including generation allowance |
-| `max_new_tokens` | `2048` | Maximum tokens generated per candidate |
-| `temperature` | `0.7` | Sampling temperature used during generation |
-| `calibration_temperature` | `1.143` | Temperature for scoring (T_gen × T_calib = 0.8 effective) |
-| `top_k` / `top_p` | `40` / `0.9` | Sampling filters |
-| `repetition_penalty` | `1.15` | Penalty factor to reduce repetitive token generation |
-| `show_candidate_scores` | `True` | Whether to print candidate scores and token counts |
-| `system_prompt` | concise general instructions | Keeps answers on topic, uses inline LaTeX for equations, and asks for fenced code blocks |
-| `calculator_prompt` | calculator syntax and usage instructions | Added only for recognized math questions, together with calculator examples |
-| `enable_rag` | `True` | Whether to automatically retrieve Wikipedia reference QA pairs before generation |
-| `rag_max_distance` | `0.65` | Maximum cosine distance threshold ($D_{\cos} \le 0.65$) for accepting retrieved context matches |
-| `rag_top_k` | `3` | Maximum number of top context matches injected into the prompt |
+| `local_model_path` | empty                                     | Local Transformers model directory; takes precedence over the Hub model and GGUF file |
+| `attention_implementation` | `sdpa`                                    | PyTorch scaled dot product attention; uses a fused CUDA attention kernel when supported |
+| `best_of_n` | `4`                                       | Number of candidates generated in one batch |
+| `max_length` | `8192`                                    | Prompt context budget, including generation allowance |
+| `max_new_tokens` | `2048`                                    | Maximum tokens generated per candidate |
+| `temperature` | `0.7`                                     | Sampling temperature used during generation |
+| `calibration_temperature` | `1.143`                                   | Temperature for scoring (T_gen × T_calib = 0.8 effective) |
+| `top_k` / `top_p` | `40` / `0.9`                              | Sampling filters |
+| `repetition_penalty` | `1.15`                                    | Penalty factor to reduce repetitive token generation |
+| `show_candidate_scores` | `True`                                    | Whether to print candidate scores and token counts |
+| `system_prompt` | concise general instructions              | Keeps answers on topic, uses inline LaTeX for equations, and asks for fenced code blocks |
+| `calculator_prompt` | calculator syntax and usage instructions  | Added only for recognized math questions, together with calculator examples |
+| `enable_rag` | `True`                                    | Whether to automatically retrieve Wikipedia reference QA pairs before generation |
+| `rag_max_distance` | `0.75`                                    | Maximum cosine distance threshold ($D_{\cos} \le 0.65$) for accepting retrieved context matches |
+| `rag_top_k` | `3`                                       | Maximum number of top context matches injected into the prompt |
 
 `config.py` also defines `RAGConfig` for dataset and retriever settings (`max_cosine_distance = 0.75`, `embedding_model_name = "sentence-transformers/all-MiniLM-L6-v2"`, `dataset_name = "rag-datasets/rag-mini-wikipedia"`, `dataset_config = "question-answer"`, and `cache_dir = tools/rag_cache`).
 

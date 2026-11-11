@@ -4,6 +4,15 @@ from typing import List
 
 
 @dataclass
+class TTSConfig:
+    """Configuration for the Kokoro TTS tool."""
+
+    enabled: bool = True
+    default_voice: str = "af_heart"
+    speed: float = 1.0
+
+
+@dataclass
 class RAGConfig:
     """Configuration for the RAG retriever tool."""
 

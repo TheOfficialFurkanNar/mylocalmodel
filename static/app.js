@@ -1,14 +1,60 @@
 let currentConversationId = null;
 let isWorking = false;
 
+// TTS state
+let activeTTSSource = null;   // currently playing EventSource (null when idle)
+let activeAudioCtx = null;    // Web AudioContext for the active playback session
+let ttsNextStartTime = 0;     // scheduled start time for the next audio chunk
+
 const messagesContainer = document.getElementById('messages');
 const conversationList = document.getElementById('conversationList');
 const conversationTitle = document.getElementById('activeConversationTitle');
 const chatForm = document.getElementById('chatForm');
 const messageInput = document.getElementById('messageInput');
 const sendButton = document.getElementById('sendButton');
+const voiceSelect = document.getElementById('voiceSelect');
 
 document.getElementById('newConversationButton').addEventListener('click', startNewConversation);
+
+// ---------------------------------------------------------------------------
+// Voice selector — populate from /tts/voices on startup
+// ---------------------------------------------------------------------------
+
+async function loadVoices() {
+    try {
+        const response = await fetch('/tts/voices');
+        const data = await response.json();
+        const voices = data.voices || [];
+        const savedVoice = localStorage.getItem('localqwen-tts-voice') || 'af_heart';
+        voiceSelect.replaceChildren();
+
+        // Group by accent
+        const groups = { US: [], UK: [] };
+        voices.forEach((v) => { (groups[v.accent] || []).push(v); });
+
+        for (const [accent, label] of [['US', 'American English'], ['UK', 'British English']]) {
+            if (!groups[accent].length) continue;
+            const optgroup = document.createElement('optgroup');
+            optgroup.label = label;
+            groups[accent].forEach((v) => {
+                const opt = document.createElement('option');
+                opt.value = v.id;
+                opt.textContent = `${v.name} (${v.gender})`;
+                opt.selected = v.id === savedVoice;
+                optgroup.appendChild(opt);
+            });
+            voiceSelect.appendChild(optgroup);
+        }
+    } catch (err) {
+        console.warn('Could not load TTS voices:', err);
+        voiceSelect.innerHTML = '<option value="af_heart">Heart (F) – default</option>';
+    }
+}
+
+voiceSelect.addEventListener('change', () => {
+    localStorage.setItem('localqwen-tts-voice', voiceSelect.value);
+    stopTTS(); // cancel any in-progress playback when voice changes
+});
 
 chatForm.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -86,6 +132,10 @@ async function sendMessage(question, assistantId) {
         updateAssistantText(assistantId, data.response || '');
         renderMetadataCard(assistantId, data.metadata || {});
         removeLoadingIndicator(assistantId);
+        // Attach TTS speaker button — getText reads the rendered plain text at click time.
+        attachSpeakerButton(assistantId, () => {
+            return document.getElementById(`answer-${assistantId}`)?.innerText || data.response || '';
+        });
         const cleanTitle = question.replace(/\s+/g, ' ').trim();
         conversationTitle.textContent = cleanTitle ? (cleanTitle.slice(0, 58) + (cleanTitle.length > 58 ? '…' : '')) : 'New chat';
         await refreshConversationList();
@@ -182,6 +232,11 @@ async function openConversation(conversationId) {
                 });
                 updateAssistantText(assistantId, message.content || '');
                 renderMetadataCard(assistantId, metadata);
+                // Attach TTS speaker button for reopened conversation messages.
+                const capturedContent = message.content || '';
+                attachSpeakerButton(assistantId, () => {
+                    return document.getElementById(`answer-${assistantId}`)?.innerText || capturedContent;
+                });
             }
         }
         await refreshConversationList();
@@ -235,6 +290,122 @@ function renderAssistantShell(assistantId) {
     content.id = `message-content-${assistantId}`;
     wrapper.append(avatar, content);
     messagesContainer.appendChild(wrapper);
+}
+
+// ---------------------------------------------------------------------------
+// TTS — streaming playback via Web Audio API + SSE
+// ---------------------------------------------------------------------------
+
+function stopTTS() {
+    if (activeTTSSource) {
+        activeTTSSource.close();
+        activeTTSSource = null;
+    }
+    if (activeAudioCtx) {
+        activeAudioCtx.close().catch(() => {});
+        activeAudioCtx = null;
+    }
+    ttsNextStartTime = 0;
+    // Reset all speaker buttons to idle state
+    document.querySelectorAll('.tts-btn.playing').forEach((btn) => {
+        btn.textContent = '🔊';
+        btn.classList.remove('playing');
+        btn.title = 'Read aloud';
+    });
+}
+
+/**
+ * Inject a speaker button into the message content area.
+ * getText: function that returns the plain-text content to synthesise.
+ */
+function attachSpeakerButton(assistantId, getText) {
+    const content = document.getElementById(`message-content-${assistantId}`);
+    if (!content) return;
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'tts-btn';
+    btn.textContent = '🔊';
+    btn.title = 'Read aloud';
+
+    btn.addEventListener('click', async () => {
+        // Toggle off if already playing.
+        if (btn.classList.contains('playing')) {
+            stopTTS();
+            return;
+        }
+        // Stop any other ongoing playback first.
+        stopTTS();
+
+        const text = typeof getText === 'function' ? getText() : getText;
+        if (!text || !text.trim()) return;
+
+        const voice = voiceSelect.value || 'af_heart';
+
+        btn.textContent = '⏳';
+        btn.classList.add('playing');
+        btn.title = 'Stop';
+
+        try {
+            const ctx = new AudioContext();
+            activeAudioCtx = ctx;
+            ttsNextStartTime = ctx.currentTime;
+
+            const url = `/tts/stream?text=${encodeURIComponent(text)}&voice=${encodeURIComponent(voice)}`;
+            const eventSource = new EventSource(url);
+            activeTTSSource = eventSource;
+            let firstChunk = true;
+
+            eventSource.onmessage = async (e) => {
+                if (!e.data) return;
+                try {
+                    // Decode base64 WAV blob sent per sentence chunk.
+                    const binary = atob(e.data);
+                    const bytes = new Uint8Array(binary.length);
+                    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+
+                    const audioBuffer = await ctx.decodeAudioData(bytes.buffer.slice(0));
+
+                    if (firstChunk) {
+                        btn.textContent = '⏹';
+                        firstChunk = false;
+                    }
+
+                    const source = ctx.createBufferSource();
+                    source.buffer = audioBuffer;
+                    source.connect(ctx.destination);
+
+                    // Schedule chunk immediately after the previous one ends.
+                    const startAt = Math.max(ttsNextStartTime, ctx.currentTime + 0.01);
+                    source.start(startAt);
+                    ttsNextStartTime = startAt + audioBuffer.duration;
+                } catch (decodeErr) {
+                    console.warn('[TTS] Chunk decode error:', decodeErr);
+                }
+            };
+
+            eventSource.addEventListener('done', () => {
+                eventSource.close();
+                activeTTSSource = null;
+                // Reset button after the last chunk finishes playing.
+                const delay = Math.max(0, (ttsNextStartTime - ctx.currentTime) * 1000 + 200);
+                setTimeout(() => {
+                    btn.textContent = '🔊';
+                    btn.classList.remove('playing');
+                    btn.title = 'Read aloud';
+                }, delay);
+            });
+
+            eventSource.addEventListener('error', () => {
+                stopTTS();
+            });
+        } catch (err) {
+            console.error('[TTS] Playback error:', err);
+            stopTTS();
+        }
+    });
+
+    content.appendChild(btn);
 }
 
 function updateAssistantText(assistantId, value) {
@@ -511,3 +682,4 @@ function scrollToBottom() {
 }
 
 initializeHistory();
+loadVoices();
