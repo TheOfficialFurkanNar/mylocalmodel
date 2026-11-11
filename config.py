@@ -69,7 +69,7 @@ class ChatConfig:
     best_of_n: int = 4  # Number of candidate responses to sample and score per turn
     show_candidate_scores: bool = True  # Display candidate scores and ranking in CLI output
     enable_rag: bool = True  # Automatically retrieve relevant Wikipedia QA context
-    rag_max_distance: float = 0.65  # Maximum cosine distance threshold for context injection
+    rag_max_distance: float = 0.75  # Maximum cosine distance threshold for context injection
     rag_top_k: int = 3  # Number of reference QA pairs to inject into prompt
     stop_sequences: List[str] = field(default_factory=lambda: [
         "\nInstruction:",
