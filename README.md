@@ -19,8 +19,9 @@ A CUDA-based chat application for Qwen instruct models, with both a command-line
 - Adds calculator instructions and few-shot examples only to prompts classified as requiring math, keeping ordinary factual prompts focused on the user's question.
 - Provides a browser chat with persistent conversation history, per-turn generation and tool metadata, and controls to reopen or delete conversations.
 - Renders assistant Markdown, fenced code blocks, and inline or display LaTeX in the browser chat. Common unwrapped commands such as `\frac{1}{2}` are automatically given inline math delimiters; generated HTML is sanitized before display.
-- **Automated RAG knowledge grounding**: Retrieves factual question-answer context from `rag-datasets/rag-mini-wikipedia` using `sentence-transformers/all-MiniLM-L6-v2` dense embeddings and cosine distance filtering ($D_{\cos} \le 0.65$), with precomputed index caching in `tools/rag_cache/`.
+- **Automated RAG knowledge grounding**: Retrieves factual question-answer context from `rag-datasets/rag-mini-wikipedia` using `sentence-transformers/all-MiniLM-L6-v2` dense embeddings and cosine distance filtering ($D_{\cos} \le 0.75$), with precomputed index caching in `tools/rag_cache/`.
 - Renders collapsible RAG reference cards in the browser chat showing retrieved Wikipedia QA pairs, question, answer, cosine distance, and similarity score.
+- **Text-to-Speech (TTS)** integration using Kokoro ONNX for streaming audio playback in the web interface.
 - Keeps conversation contents, calculator audit logs, and RAG cache indices in local files excluded from Git.
 
 ## Examples
@@ -57,6 +58,8 @@ Python dependencies are listed in `requirements.txt`:
 - `datasets` (loading Hugging Face datasets natively)
 - `sentence-transformers` (dense vector embeddings for semantic retrieval)
 - `tqdm` (progress tracking for embedding calculation)
+- `kokoro-onnx>=0.6.0` (text-to-speech; version 0.6.0+ required for speed parameter fix)
+- `soundfile` (audio file handling)
 
 Install a CUDA-compatible PyTorch build as described in the setup steps below.
 
@@ -118,7 +121,7 @@ Edit the defaults in `config.py` (`ChatConfig`) before launching. Common setting
 | `system_prompt` | concise general instructions              | Keeps answers on topic, uses inline LaTeX for equations, and asks for fenced code blocks |
 | `calculator_prompt` | calculator syntax and usage instructions  | Added only for recognized math questions, together with calculator examples |
 | `enable_rag` | `True`                                    | Whether to automatically retrieve Wikipedia reference QA pairs before generation |
-| `rag_max_distance` | `0.75`                                    | Maximum cosine distance threshold ($D_{\cos} \le 0.65$) for accepting retrieved context matches |
+| `rag_max_distance` | `0.75`                                    | Maximum cosine distance threshold ($D_{\cos} \le 0.75$) for accepting retrieved context matches |
 | `rag_top_k` | `3`                                       | Maximum number of top context matches injected into the prompt |
 
 `config.py` also defines `RAGConfig` for dataset and retriever settings (`max_cosine_distance = 0.75`, `embedding_model_name = "sentence-transformers/all-MiniLM-L6-v2"`, `dataset_name = "rag-datasets/rag-mini-wikipedia"`, `dataset_config = "question-answer"`, and `cache_dir = tools/rag_cache`).
@@ -169,21 +172,93 @@ Inputs are restricted by expression length, syntax depth, exponent size, and res
 
 When `enable_rag` is `True` (the default), each user message is first used as a query against a local retrieval index built from `rag-datasets/rag-mini-wikipedia` (`question-answer` split) via the Hugging Face `datasets` library. The retriever embeds every question-answer pair once with `sentence-transformers/all-MiniLM-L6-v2` (384-dimensional, L2-normalized) and caches the index in `tools/rag_cache/rag_mini_wiki_qa_index.pt`; subsequent runs load the cached index instead of re-embedding the dataset.
 
-At query time, the user message is embedded with the same model and compared to the index by cosine distance ($D_{\cos} = 1 - \text{cosine similarity}$). Matches with $D_{\cos} \le$ `rag_max_distance` (default `0.65`) are kept, sorted by distance ascending, and the top `rag_top_k` (default `3`) are formatted as a `[Wikipedia QA Reference Context]` block and prepended to the user message inside the chat prompt. Retrieved context is treated as reference material only — it is not inserted into conversation history, and the model is not explicitly instructed to cite or obey it.
+At query time, the user message is embedded with the same model and compared to the index by cosine distance ($D_{\cos} = 1 - \text{cosine similarity}$). Matches with $D_{\cos} \le$ `rag_max_distance` (default `0.75`) are kept, sorted by distance ascending, and the top `rag_top_k` (default `3`) are formatted as a `[Wikipedia QA Reference Context]` block and prepended to the user message inside the chat prompt. Retrieved context is treated as reference material only — it is not inserted into conversation history, and the model is not explicitly instructed to cite or obey it.
 
 In the web interface, each assistant turn's metadata records whether RAG was used (`rag_used`) and the retrieved matches (question, answer, distance, similarity), rendered as collapsible reference cards. The RAG index cache and embedding model download are local-only artifacts and are excluded from Git.
 
 RAG retrieval runs once per user turn, before the Best-of-N generation batch, so its latency is paid once regardless of `best_of_n`. If the embedding model or dataset cannot be loaded, the application logs a warning and continues without RAG rather than failing.
 
+## Text-to-Speech (TTS) tool
+
+The web interface includes text-to-speech functionality using **Kokoro ONNX**, a lightweight ONNX-based TTS engine that runs entirely on CPU (no CUDA required). The TTS system streams audio as the response is generated, providing real-time speech playback in the browser.
+
+### How TTS works in this application
+
+The TTS system operates as follows:
+
+1. **Text Processing**: When a response is generated, the text is split into sentences or natural phrase boundaries for more natural-sounding speech.
+
+2. **ONNX Inference**: Kokoro ONNX uses a neural network model trained on speech data to generate audio waveforms from text. The model runs on CPU using ONNX Runtime, making it accessible without CUDA requirements.
+
+3. **Streaming Architecture**: Instead of generating the entire audio file upfront, the system streams audio chunks as they are synthesized. This is implemented using Server-Sent Events (SSE), allowing the browser to begin playback almost immediately while synthesis continues in the background.
+
+4. **Voice Selection**: Different voice embeddings (stored in `voices-v1..bin`) modify the base model's output to produce distinct speaking styles, accents, and gender characteristics.
+
+5. **Audio Encoding**: Generated audio samples are encoded as 16-bit PCM WAV format at 24 kHz sample rate, providing high-quality speech suitable for web playback.
+
+### Features
+
+- **Streaming synthesis**: Audio is generated and streamed sentence-by-sentence using Server-Sent Events (SSE)
+- **Multiple voices**: 10 built-in voices (5 American English, 5 British English) with different accents and genders
+- **Automatic model download**: Model files are automatically downloaded from GitHub releases on first use and cached locally
+- **No external dependencies**: Uses ONNX Runtime (CPU-only), no espeak-ng or other system dependencies required
+- **24 kHz audio**: High-quality 16-bit PCM WAV output at 24 kHz sample rate
+
+### Available voices
+
+| Voice ID | Name | Gender | Accent | Language |
+| --- | --- | --- | --- | --- |
+| `af_heart` | Heart | Female | US | en-us |
+| `af_sky` | Sky | Female | US | en-us |
+| `af_bella` | Bella | Female | US | en-us |
+| `af_sarah` | Sarah | Female | US | en-us |
+| `af_nicole` | Nicole | Female | US | en-us |
+| `am_adam` | Adam | Male | US | en-us |
+| `am_michael` | Michael | Male | US | en-us |
+| `bf_emma` | Emma | Female | UK | en-gb |
+| `bf_isabella` | Isabella | Female | UK | en-gb |
+| `bm_george` | George | Male | UK | en-gb |
+| `bm_lewis` | Lewis | Male | UK | en-gb |
+
+### Configuration
+
+TTS settings are configured in `config.py` (`TTSConfig`):
+
+| Setting | Default | Purpose |
+| --- | --- | --- |
+| `enabled` | `True` | Enable/disable TTS functionality |
+| `default_voice` | `af_heart` | Default voice for synthesis |
+| `speed` | `1.0` | Speech speed (0.5 to 2.0) |
+
+### API endpoints
+
+- `GET /tts/voices` - Returns the list of available voices
+- `GET /tts/stream?text=<text>&voice=<voice>` - Streams synthesized audio as SSE events
+
+The web interface automatically plays the streamed audio using the Web Audio API. Users can select different voices from the UI.
+
+### Model files
+
+Kokoro TTS model files are stored in `tools/tts_cache/`:
+- `kokoro-v1.0.onnx` - The ONNX model (~326 MB)
+- `voices-v1.0.bin` - Voice embeddings (~28 MB)
+
+These files are automatically downloaded on first use from GitHub releases and cached for subsequent runs.
+
+### Version requirement
+
+The TTS functionality requires `kokoro-onnx>=0.6.0`. Earlier versions (0.4.7-0.5.0) have a bug where the speed parameter is incorrectly passed as `int32` instead of `float32`, causing ONNX Runtime errors with newer model exports.
+
 ## Project files
 
 - `run.py` — model loading, prompt construction, batched generation, response selection, and interactive CLI.
-- `web_backend.py` — FastAPI chat API, Best-of-N web generation, calculator flow, and local conversation persistence.
+- `web_backend.py` — FastAPI chat API, Best-of-N web generation, calculator flow, TTS streaming, and local conversation persistence.
 - `static/` — web chat UI with conversation history and per-turn calculator/candidate metadata.
 - `config.py` — model, generation, scoring, and stop-sequence settings.
 - `calibration.py` — temperature scaling, length-normalized candidate scoring, and confidence metrics computation.
 - `tools/calculator.py` — restricted arithmetic and SymPy calculus evaluator with AST-based validation.
 - `tools/calculator_worker.py` — subprocess entry point for calculator evaluation with a timeout.
+- `tools/tts.py` — Kokoro ONNX text-to-speech engine with streaming synthesis and voice management.
 - `requirements.txt` — Python dependencies.
 - `LICENSE` — MIT License.
 
