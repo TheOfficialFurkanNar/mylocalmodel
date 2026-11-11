@@ -320,6 +320,71 @@ h1 {
     margin: 0.75rem 0;
 }
 
+/* Header controls — voice selector */
+.header-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.voice-label {
+    font-size: 0.85rem;
+    color: #374151;
+    white-space: nowrap;
+}
+
+.voice-select {
+    padding: 0.35rem 0.6rem;
+    border: 1px solid #d1d5db;
+    border-radius: 0.4rem;
+    font-size: 0.85rem;
+    color: #111827;
+    background: white;
+    cursor: pointer;
+    max-width: 190px;
+}
+
+.voice-select:focus {
+    outline: none;
+    border-color: #2563eb;
+    box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
+}
+
+/* TTS speaker button */
+.tts-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    padding: 0;
+    border: 1px solid #d1d5db;
+    border-radius: 0.4rem;
+    background: white;
+    font-size: 1rem;
+    cursor: pointer;
+    color: #374151;
+    flex-shrink: 0;
+    align-self: flex-start;
+    margin-top: 0.1rem;
+    transition: background 0.15s, border-color 0.15s;
+}
+
+.tts-btn:hover {
+    background: #f3f4f6;
+    border-color: #9ca3af;
+}
+
+.tts-btn.playing {
+    background: #eff6ff;
+    border-color: #2563eb;
+    color: #2563eb;
+}
+
+.tts-btn.playing:hover {
+    background: #dbeafe;
+}
+
 /* RAG Reference Card */
 .rag-card {
     border: 1px solid #bbf7d0;

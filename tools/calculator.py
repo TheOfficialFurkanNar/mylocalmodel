@@ -18,7 +18,7 @@ class CalculatorError(ValueError):
     """Raised when calculator input is invalid or cannot be evaluated."""
 
 
-TIMEOUT_SECONDS = 2.0
+TIMEOUT_SECONDS = 5.0
 MAX_EXPRESSION_LENGTH = 512
 MAX_AST_NODES = 100
 MAX_AST_DEPTH = 20
