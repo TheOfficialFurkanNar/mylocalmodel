@@ -18,7 +18,7 @@ class CalculatorError(ValueError):
     """Raised when calculator input is invalid or cannot be evaluated."""
 
 
-TIMEOUT_SECONDS = 5.0
+TIMEOUT_SECONDS = 60.0
 MAX_EXPRESSION_LENGTH = 512
 MAX_AST_NODES = 100
 MAX_AST_DEPTH = 20
@@ -183,8 +183,8 @@ def calculate(expression: str, timeout: float = TIMEOUT_SECONDS) -> str:
     ``integrate(sin(x), x)``, and ``limit(sin(x)/x, x, 0)``.
     """
     normalized = _normalize(expression)
-    if not 0 < timeout <= 2.0:
-        raise ValueError("Timeout must be greater than 0 and no more than 2 seconds.")
+    if not 0 < timeout <= 60.0:
+        raise ValueError("Timeout must be greater than 0 and no more than 60 seconds.")
 
     started = time.perf_counter()
     try:
